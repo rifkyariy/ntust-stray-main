@@ -1,4 +1,6 @@
 import io
+import os
+from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -20,6 +22,18 @@ app.add_middleware(
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/models")
+def list_models() -> dict:
+    """List available YOLO models and current model in use."""
+    models = sorted([f.stem for f in Path("/app").glob("*.pt")])
+    current = os.getenv("YOLO_MODEL", "catFinderV14_yoloWeights.pt")
+    return {
+        "available_models": models,
+        "current_model": current,
+        "to_switch": "Set YOLO_MODEL environment variable and restart"
+    }
 
 
 @app.post("/detect", response_model=DetectionResponse)

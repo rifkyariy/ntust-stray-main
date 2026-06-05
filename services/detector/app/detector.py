@@ -1,7 +1,9 @@
 """
 YOLOv8 inference wrapper.
 Model is loaded once at import time (singleton pattern).
+Supports multiple model weights via YOLO_MODEL environment variable.
 """
+import os
 import time
 from pathlib import Path
 from PIL import Image
@@ -31,7 +33,10 @@ _model: YOLO | None = None
 def _get_model() -> YOLO:
     global _model
     if _model is None:
-        weights = Path("yolov8n.pt")
+        model_name = os.getenv("YOLO_MODEL", "catFinderV14_yoloWeights.pt")
+        weights = Path(model_name)
+        if not weights.exists():
+            raise FileNotFoundError(f"Model not found: {model_name}")
         _model = YOLO(str(weights))
     return _model
 
