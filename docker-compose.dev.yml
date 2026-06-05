@@ -1,0 +1,55 @@
+services:
+  mosquitto:
+    volumes:
+      - ./mosquitto/mosquitto.dev.conf:/mosquitto/config/mosquitto.conf:ro
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend/app:/app/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  mobile:
+    build:
+      context: .
+      dockerfile: apps/mobile/Dockerfile.dev
+    volumes:
+      - ./apps/mobile:/app/apps/mobile
+      - ./packages/ui:/app/packages/ui
+    command: pnpm --filter @stray/mobile dev
+
+  landing:
+    build:
+      context: .
+      dockerfile: apps/landing/Dockerfile.dev
+    volumes:
+      - ./apps/landing:/app/apps/landing
+      - ./packages/ui:/app/packages/ui
+    command: pnpm --filter @stray/landing dev
+
+  admin:
+    build:
+      context: .
+      dockerfile: apps/admin/Dockerfile.dev
+    volumes:
+      - ./apps/admin:/app/apps/admin
+      - ./packages/ui:/app/packages/ui
+    environment:
+      NEXT_PUBLIC_DETECTOR_URL: ${NEXT_PUBLIC_DETECTOR_URL:-http://localhost:8001}
+    command: pnpm --filter @stray/admin dev
+
+  detector:
+    build:
+      context: ./services/detector
+      dockerfile: Dockerfile
+    volumes:
+      - ./services/detector/app:/app/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    ports:
+      - "8001:8001"
+
+  influxdb:
+    ports:
+      - "8086:8086"

@@ -1,0 +1,9 @@
+FROM node:20-alpine
+RUN corepack enable pnpm
+WORKDIR /app
+COPY package.json pnpm-workspace.yaml ./
+COPY apps/admin/package.json ./apps/admin/
+COPY packages/ui/package.json ./packages/ui/
+RUN pnpm install
+EXPOSE 3002
+CMD ["pnpm", "--filter", "@stray/admin", "dev"]

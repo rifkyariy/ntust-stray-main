@@ -1,0 +1,30 @@
+# Node
+node_modules/
+.next/
+dist/
+.turbo/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Docker volumes
+mosquitto/data/*
+mosquitto/log/*
+!mosquitto/data/.gitkeep
+!mosquitto/log/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+backend/test.db
+backend/.pytest_cache/

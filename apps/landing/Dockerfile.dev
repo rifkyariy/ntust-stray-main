@@ -1,0 +1,9 @@
+FROM node:20-alpine
+RUN corepack enable pnpm
+WORKDIR /app
+COPY package.json pnpm-workspace.yaml ./
+COPY apps/landing/package.json ./apps/landing/
+COPY packages/ui/package.json ./packages/ui/
+RUN pnpm install
+EXPOSE 3001
+CMD ["pnpm", "--filter", "@stray/landing", "dev"]
