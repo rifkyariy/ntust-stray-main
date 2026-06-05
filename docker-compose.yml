@@ -137,14 +137,16 @@ services:
       dockerfile: apps/admin/Dockerfile
     restart: unless-stopped
     environment:
-      API_URL: http://backend:8000
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/ws}
-      NEXT_PUBLIC_DETECTOR_URL: ${NEXT_PUBLIC_DETECTOR_URL:-http://localhost:8001}
+      API_URL: http://backend:3004
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3004}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:3004/ws}
+      NEXT_PUBLIC_DETECTOR_URL: ${NEXT_PUBLIC_DETECTOR_URL:-http://localhost:3008}
     ports:
-      - "3002:3002"
+      - "3007:3002"
     networks:
       - stray_network
     depends_on:
-      - backend
-      - detector
+      backend:
+        condition: service_healthy
+      detector:
+        condition: service_healthy
