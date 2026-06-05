@@ -127,7 +127,12 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "3008:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - stray_network
 
