@@ -94,15 +94,16 @@ services:
       dockerfile: apps/mobile/Dockerfile
     restart: unless-stopped
     environment:
-      API_URL: http://backend:8000
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/ws}
+      API_URL: http://backend:3004
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3004}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:3004/ws}
     ports:
-      - "3000:3000"
+      - "3005:3000"
     networks:
       - stray_network
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   landing:
     build:
