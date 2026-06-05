@@ -111,14 +111,15 @@ services:
       dockerfile: apps/landing/Dockerfile
     restart: unless-stopped
     environment:
-      API_URL: http://backend:8000
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      API_URL: http://backend:3004
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3004}
     ports:
-      - "3001:3001"
+      - "3006:3001"
     networks:
       - stray_network
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   detector:
     build:
