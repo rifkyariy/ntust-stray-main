@@ -472,6 +472,11 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
   /* isSeg always derived from model path — never separate state */
   const isSeg = currentModel.includes('-seg');
 
+  /* demo precompute state */
+  const [demoStatus, setDemoStatus]   = useState<'idle'|'processing'|'ready'|'error'>('idle');
+  const [demoProgress, setDemoProgress] = useState(0);
+  const [demoError, setDemoError]     = useState<string | null>(null);
+
   /* detection data */
   const [activeBoxes, setActiveBoxes]         = useState<Detection[]>([]);
   const [detectionHistory, setDetectionHistory] = useState<Detection[]>([]);
@@ -549,6 +554,52 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
     setDetectionHistory(dedupedSorted);
     detectionHistoryRef.current = dedupedSorted;
   }, []);
+
+  /* ── Demo: load precomputed detections (process-once, replay-forever) ── */
+  useEffect(() => {
+    if (source !== 'demo') return;
+    let cancelled = false;
+
+    const flatten = (data: any) => {
+      const hist: Detection[] = [];
+      for (const fr of data.frames ?? []) {
+        for (const d of fr.detections ?? []) {
+          hist.push({
+            id: `${fr.t.toFixed(2)}-${Math.random().toString(36).slice(2)}`,
+            videoTime: fr.t,
+            confidence: d.confidence,
+            bbox: d.bbox,
+            track_id: d.track_id ?? null,
+            mask: d.mask ?? null,
+          });
+        }
+      }
+      detectionHistoryRef.current = hist;
+      finalizeTimeline(hist);
+      setScanDone(true);
+      setDemoStatus('ready');
+      const v = videoRef.current;
+      if (v) { v.loop = true; v.currentTime = 0; v.play().catch(() => {}); setPaused(false); }
+    };
+
+    const poll = async () => {
+      try {
+        const r = await fetch(`${detectorUrl}/demo/detections`);
+        const j = await r.json();
+        if (cancelled) return;
+        if (j.status === 'ready') { setDetectorOnline(true); flatten(j.data); return; }
+        if (j.status === 'error') { setDemoStatus('error'); setDemoError(j.message ?? 'processing failed'); return; }
+        setDetectorOnline(true);
+        setDemoStatus('processing');
+        setDemoProgress(j.progress ?? 0);
+        setTimeout(poll, 1200);
+      } catch {
+        if (!cancelled) { setDetectorOnline(false); setDemoStatus('error'); setDemoError('detector offline'); }
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [source, detectorUrl, finalizeTimeline]);
 
   /* ── Called on every video 'ended' event ── */
   const handleVideoEnd = useCallback(() => {
@@ -658,21 +709,19 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
     }, 'image/jpeg', 0.92);
   }, [detectorUrl, conf, iou, imgsz, augment]);
 
-  /* detection loop — only while demo video playing and scan not finished.
+  /* detection loop — only while ESP-Cam source and scan not finished.
      The in-flight guard means each tick just asks "can I capture yet?", so a
      short interval simply minimises the gap after each inference completes. */
   useEffect(() => {
-    if (source !== 'demo' || scanDone) return;
+    if (source !== 'espcam' || scanDone) return;
     const id = setInterval(captureAndDetect, 250);
     return () => clearInterval(id);
   }, [source, scanDone, captureAndDetect]);
 
-  /* Slow playback while scanning so detection (1–4s/frame on CPU) covers more
-     of the video; restore full speed once the scan is finalised for review. */
+  /* Demo always plays at 1× — no slow scan pass needed (detections precomputed). */
   useEffect(() => {
     const v = videoRef.current;
-    if (!v) return;
-    v.playbackRate = scanDone ? 1 : 0.5;
+    if (v) v.playbackRate = 1;
   }, [scanDone, passCount]);
 
   /* auto-play on mount */
@@ -805,7 +854,6 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
                 <video
                   ref={videoRef}
                   src="/video/dummy.mp4"
-                  /* no loop — detect one full pass then enter review mode */
                   muted playsInline
                   onTimeUpdate={() => {
                     if (!isSeekingRef.current) {
@@ -820,7 +868,6 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
                       setVideoDuration(v.duration);
                     }
                   }}
-                  onEnded={handleVideoEnd}
                   onPlay={() => setPaused(false)}
                   onPause={() => setPaused(true)}
                   style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
@@ -892,6 +939,30 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
                 }}>
                   <WifiOff size={11} color="#fff" />
                   <span style={{ fontSize: 11, color: '#fff', fontFamily: 'monospace' }}>Detector offline</span>
+                </div>
+              )}
+
+              {source === 'demo' && demoStatus === 'processing' && (
+                <div style={{
+                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center', gap: 10,
+                  background: 'rgba(13,17,23,0.78)', backdropFilter: 'blur(3px)',
+                }}>
+                  <ScanLine size={26} color={D.orange} strokeWidth={1.4} />
+                  <span style={{ fontSize: 12, fontFamily: 'monospace', color: D.text }}>
+                    Processing demo · {Math.round(demoProgress * 100)}%
+                  </span>
+                  <div style={{ width: 180, height: 4, background: D.border, borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${Math.round(demoProgress * 100)}%`, background: D.orange }} />
+                  </div>
+                </div>
+              )}
+              {source === 'demo' && demoStatus === 'error' && (
+                <div style={{
+                  position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)',
+                  background: 'rgba(239,68,68,0.85)', borderRadius: 8, padding: '5px 14px',
+                }}>
+                  <span style={{ fontSize: 11, color: '#fff', fontFamily: 'monospace' }}>{demoError}</span>
                 </div>
               )}
 
