@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from PIL import Image
 
-from app import detector
+from app import detector, pipeline, demo
 from app.schemas import DetectionResponse
 
 _executor = ThreadPoolExecutor(max_workers=1)
@@ -48,6 +48,8 @@ async def detect(
     iou:     float = Query(default=0.45, ge=0.1,  le=0.9),
     imgsz:   int   = Query(default=960,  ge=320,  le=1536),
     augment: bool  = Query(default=False),
+    slice:   bool  = Query(default=False),
+    smooth:  bool  = Query(default=True),
 ) -> DetectionResponse:
     if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
         raise HTTPException(status_code=415, detail=f"Unsupported media type: {file.content_type}")
@@ -60,6 +62,35 @@ async def detect(
 
     loop = asyncio.get_event_loop()
     detections, inference_ms, is_seg = await loop.run_in_executor(
-        _executor, lambda: detector.run_detection(image, conf, iou, imgsz, augment)
+        _executor,
+        lambda: detector.run_detection(image, conf, iou, imgsz, augment, slice, smooth),
     )
     return DetectionResponse(detections=detections, inference_ms=inference_ms, is_segmentation=is_seg)
+
+
+@app.post("/tracker/reset")
+def tracker_reset() -> dict:
+    pipeline.reset_tracking()
+    return {"status": "ok"}
+
+
+@app.get("/demo/detections")
+def demo_detections() -> dict:
+    return demo.ensure_started()
+
+
+@app.post("/demo/process")
+def demo_process(
+    conf:   float = Query(default=0.15, ge=0.05, le=0.95),
+    iou:    float = Query(default=0.45, ge=0.1, le=0.9),
+    imgsz:  int   = Query(default=1280, ge=320, le=1536),
+    slice:  bool  = Query(default=True),
+    smooth: bool  = Query(default=True),
+    stride: float = Query(default=0.3, ge=0.1, le=2.0),
+    force:  bool  = Query(default=False),
+) -> dict:
+    settings = {
+        "conf": conf, "iou": iou, "imgsz": imgsz,
+        "slice": slice, "smooth": smooth, "stride": stride,
+    }
+    return demo.start_processing(settings, force=force)
