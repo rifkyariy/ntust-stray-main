@@ -94,10 +94,12 @@ def get_state() -> dict:
 
 
 def _default_settings() -> dict:
-    cfg = detector.get_config()
+    # Fast single-pass defaults so the one-time precompute finishes in ~minutes on
+    # CPU. Slicing (SAHI) is far better for small/distant cats but is ~4-5x slower
+    # per frame — opt into it from the UI (Slicing toggle + Re-process) when wanted.
     return {
-        "conf": 0.15, "iou": 0.45, "imgsz": 1280,
-        "slice": True, "smooth": True, "stride": cfg.get("stride", 0.3),
+        "conf": 0.15, "iou": 0.45, "imgsz": 960,
+        "slice": False, "smooth": True, "stride": 0.5,
     }
 
 

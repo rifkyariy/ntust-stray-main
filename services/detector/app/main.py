@@ -83,10 +83,10 @@ def demo_detections() -> dict:
 def demo_process(
     conf:   float = Query(default=0.15, ge=0.05, le=0.95),
     iou:    float = Query(default=0.45, ge=0.1, le=0.9),
-    imgsz:  int   = Query(default=1280, ge=320, le=1536),
-    slice:  bool  = Query(default=True),
+    imgsz:  int   = Query(default=960, ge=320, le=1536),
+    slice:  bool  = Query(default=False),
     smooth: bool  = Query(default=True),
-    stride: float = Query(default=0.3, ge=0.1, le=2.0),
+    stride: float = Query(default=0.5, ge=0.1, le=2.0),
     force:  bool  = Query(default=False),
 ) -> dict:
     settings = {

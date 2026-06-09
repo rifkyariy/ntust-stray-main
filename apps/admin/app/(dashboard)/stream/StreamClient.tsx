@@ -464,7 +464,7 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
   const [iou, setIou]                         = useState(0.45);
   const [imgsz, setImgsz]                     = useState(960);   // inference resolution
   const [augment, setAugment]                 = useState(false); // test-time augmentation
-  const [slice, setSlice]                     = useState(true);  // demo precompute default on
+  const [slice, setSlice]                     = useState(false); // off by default (fast); opt-in for small-cat recall
   const [smooth, setSmooth]                   = useState(true);
   const [reprocessNonce, setReprocessNonce]   = useState(0);
   const [currentModel, setCurrentModel]       = useState('yolo26/yolo26l.pt');
@@ -805,11 +805,11 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
           )}
           <p style={{ fontSize: 11, color: D.muted, marginTop: embedded ? 0 : 2, fontFamily: 'monospace' }}>
             {modelLabel(currentModel)} · {isSeg ? 'segmentation' : 'detection'} ·{' '}
-            {scanDone
-              ? `${uniqueCats} cat${uniqueCats !== 1 ? 's' : ''} · ${totalVisits} visits · ${SCAN_PASSES}-pass scan`
-              : passCount >= SCAN_PASSES
-                ? 'Finalizing…'
-                : `scanning pass ${passCount + 1} of ${SCAN_PASSES}…`}
+            {source === 'demo' && demoStatus === 'processing'
+              ? `processing… ${Math.round(demoProgress * 100)}%`
+              : scanDone
+                ? `${uniqueCats} cat${uniqueCats !== 1 ? 's' : ''} · ${totalVisits} visits · live replay`
+                : 'live'}
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1008,30 +1008,34 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
                 ))}
               </div>
 
-              {/* Scan progress / live count badge */}
+              {/* Live / processing badge */}
               <div style={{
                 position: 'absolute', top: 10, right: 10,
                 background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
                 border: `1px solid ${D.border}`, borderRadius: 8,
                 padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 6,
               }}>
-                {scanDone ? (
-                  <>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: D.green, flexShrink: 0 }} />
-                    <span style={{ fontSize: 10, color: D.green, fontFamily: 'monospace', fontWeight: 700 }}>
-                      {SCAN_PASSES} passes · {displayBoxes.length} cat{displayBoxes.length !== 1 ? 's' : ''} @ {fmtVT(videoTime)}
-                    </span>
-                  </>
-                ) : (
+                {source === 'demo' && demoStatus === 'processing' ? (
                   <>
                     <span style={{
                       width: 6, height: 6, borderRadius: '50%', background: D.orange, flexShrink: 0,
                       animation: 'stray-pulse 0.8s infinite',
                     }} />
                     <span style={{ fontSize: 10, color: D.orange, fontFamily: 'monospace', fontWeight: 700 }}>
-                      {passCount < SCAN_PASSES
-                        ? `Pass ${passCount + 1} of ${SCAN_PASSES} · ${displayBoxes.length} live`
-                        : 'Finalizing…'}
+                      PROCESSING {Math.round(demoProgress * 100)}%
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{
+                      width: 6, height: 6, borderRadius: '50%', background: D.red, flexShrink: 0,
+                      animation: 'stray-pulse 1.4s infinite',
+                    }} />
+                    <span style={{ fontSize: 10, color: D.red, fontFamily: 'monospace', fontWeight: 700, letterSpacing: '0.08em' }}>
+                      LIVE
+                    </span>
+                    <span style={{ fontSize: 10, color: D.muted, fontFamily: 'monospace' }}>
+                      {displayBoxes.length} cat{displayBoxes.length !== 1 ? 's' : ''}
                     </span>
                   </>
                 )}
