@@ -220,15 +220,16 @@ function PresenceTimeline({
                     boxShadow: `0 0 5px ${D.orange}88`, zIndex: 2, pointerEvents: 'none',
                   }} />
                 </div>
-                <span style={{ fontSize: 9, color: D.muted, fontFamily: 'monospace', minWidth: 18, textAlign: 'right', flexShrink: 0 }}>
+                <span style={{ fontSize: 9, color: D.muted, fontFamily: 'monospace', width: 28, textAlign: 'right', flexShrink: 0 }}>
                   {cat.visitCount}×
                 </span>
               </div>
             ))}
           </div>
 
-          {/* Time axis */}
-          <div style={{ position: 'relative', height: 14, marginLeft: 52, marginTop: 3 }}>
+          {/* Time axis — must span the same horizontal range as the track area:
+             left = id label (44) + gap (8); right = visit-count (28) + gap (8). */}
+          <div style={{ position: 'relative', height: 14, marginLeft: 52, marginRight: 36, marginTop: 3 }}>
             {ticks.map(f => (
               <span key={f} style={{
                 position: 'absolute', left: `${f * 100}%`, transform: 'translateX(-50%)',
