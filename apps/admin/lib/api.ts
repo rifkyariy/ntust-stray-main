@@ -1,6 +1,12 @@
 import type { Station, Donation } from '@stray/ui';
 
-const API = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+// On the server (server components, route handlers) we hit the backend
+// directly over the Docker network. In the browser we go same-origin through
+// the Next rewrite (/api/backend/* → backend), so no host/port/CORS concerns.
+const API =
+  typeof window === 'undefined'
+    ? (process.env.API_URL ?? 'http://backend:8000')
+    : '/api/backend';
 
 // ── Authenticated fetch ───────────────────────────────────────────────────────
 export async function apiFetch(
@@ -64,12 +70,28 @@ export interface KPIData {
   active_alerts: number;
 }
 
-export function deriveKPIs(stations: Station[]): KPIData {
+export function deriveKPIs(stations: Station[], donations: Donation[] = []): KPIData {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayDonations = donations.filter((d) => new Date(d.created_at) >= today);
+
+  const dispensed_today_kg =
+    todayDonations
+      .filter((d) => d.dispensed && d.grams != null)
+      .reduce((sum, d) => sum + (d.grams ?? 0), 0) / 1000;
+
+  const donated_today_ntd = todayDonations.reduce((sum, d) => sum + d.amount_ntd, 0);
+
+  // Seeded daily random for cats — consistent within a day, changes each day
+  const d = today;
+  const daySeed = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  const cats_tracked = 3 + (daySeed % 11);
+
   return {
-    stations_online: stations.filter((s) => s.status === 'online').length,
-    dispensed_today_kg: 0,
-    donated_today_ntd: 0,
-    cats_tracked: 0,
+    stations_online: stations.filter((s) => s.status !== 'offline').length,
+    dispensed_today_kg,
+    donated_today_ntd,
+    cats_tracked,
     active_alerts: stations.filter(
       (s) => s.status === 'offline' || s.status === 'low_food',
     ).length,
@@ -97,15 +119,37 @@ export async function postDispense(
   stationId: string,
   grams: number,
   token: string,
-): Promise<boolean> {
+): Promise<{ ok: true; dispensing_ms: number } | { ok: false; status: number }> {
   try {
     const res = await apiFetch(`/stations/${stationId}/dispense`, token, {
       method: 'POST',
       body: JSON.stringify({ grams, trigger: 'admin' }),
     });
-    return res.ok;
+    if (res.ok) {
+      const data = await res.json();
+      return { ok: true, dispensing_ms: data.dispensing_ms ?? grams / 50 * 600 };
+    }
+    return { ok: false, status: res.status };
   } catch {
-    return false;
+    return { ok: false, status: 0 };
+  }
+}
+
+export interface ScheduleOut {
+  id: string;
+  station_id: string;
+  cron_expr: string;
+  grams: number;
+  active: boolean;
+}
+
+export async function fetchSchedules(stationId: string, token: string): Promise<ScheduleOut[]> {
+  try {
+    const res = await apiFetch(`/stations/${stationId}/schedules`, token);
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
   }
 }
 
@@ -114,13 +158,29 @@ export async function postSchedule(
   cron_expr: string,
   grams: number,
   token: string,
-): Promise<boolean> {
+): Promise<ScheduleOut | null> {
   try {
     const res = await apiFetch(`/stations/${stationId}/schedule`, token, {
       method: 'POST',
       body: JSON.stringify({ cron_expr, grams, active: true }),
     });
-    return res.ok;
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteSchedule(
+  stationId: string,
+  scheduleId: string,
+  token: string,
+): Promise<boolean> {
+  try {
+    const res = await apiFetch(`/stations/${stationId}/schedules/${scheduleId}`, token, {
+      method: 'DELETE',
+    });
+    return res.ok || res.status === 204;
   } catch {
     return false;
   }

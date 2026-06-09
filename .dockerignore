@@ -13,3 +13,8 @@ backend/__pycache__
 backend/**/__pycache__
 backend/.pytest_cache
 backend/**/.pytest_cache
+# YOLO model files are large and only needed by the detector build
+# The detector uses context: ./services/detector so these don't belong here
+services/detector/models
+services/detector/__pycache__
+services/detector/**/__pycache__

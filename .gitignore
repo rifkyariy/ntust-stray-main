@@ -28,3 +28,10 @@ Thumbs.db
 # Test artifacts
 backend/test.db
 backend/.pytest_cache/
+
+# Package store / large model weights / tunnel config
+.pnpm-store/
+services/detector/models/
+services/detector/cache/
+*.pt
+cloudflared/

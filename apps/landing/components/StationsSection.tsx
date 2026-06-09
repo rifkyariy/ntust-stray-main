@@ -125,22 +125,24 @@ function StationCard({ station: s }: { station: Station }) {
 }
 
 // Fallback skeleton when API is unavailable
-const SKELETON_STATIONS: Station[] = Array.from({ length: 6 }, (_, i) => ({
-  id: `seed-${i}`,
-  station_code: `F-TPE-0${i + 1}`,
-  name: ['Da\'an Park', 'Ximending', 'Shilin Night Market', 'Gongguan', 'Xinyi', 'Zhongshan'][i],
-  city: 'Taipei',
-  district: ['Da\'an', 'Wanhua', 'Shilin', 'Zhongzheng', 'Xinyi', 'Zhongshan'][i],
-  lat: 25.03 + i * 0.01,
-  lng: 121.53 + i * 0.01,
-  status: (['online', 'online', 'online', 'low_food', 'online', 'offline'] as const)[i],
-  food_pct: [72, 45, 88, 18, 63, 0][i],
-  battery_pct: [90, 75, 95, 40, 80, 0][i],
-  temp_c: 27.2,
-  humidity_pct: 68,
-  installed_at: '2026-01-01T00:00:00Z',
-  image_url: null,
-}));
+const SKELETON_STATIONS: Station[] = [
+  {
+    id: 'seed-1',
+    station_code: 'NTUST-STR-01',
+    name: 'National Taiwan University of Science and Technology',
+    city: 'Taipei City',
+    district: 'Daan District',
+    lat: 25.0122202,
+    lng: 121.541437,
+    status: 'online',
+    food_pct: 85,
+    battery_pct: 100,
+    temp_c: 26.5,
+    humidity_pct: 65,
+    installed_at: '2026-01-01T00:00:00Z',
+    image_url: 'https://images.unsplash.com/photo-1562774053-701939374585?w=800&q=80&auto=format&fit=crop',
+  },
+];
 
 export async function StationsSection() {
   const stations = await fetchStations();

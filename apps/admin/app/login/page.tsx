@@ -27,24 +27,19 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError('');
-
-    // ── 1. Dummy credentials — immediate bypass, no network call ─────────────
-    if (email === DUMMY_EMAIL && password === DUMMY_PASSWORD) {
-      await setCookie('dev-bypass-token');
+    try {
+      const data = await postLogin(email, password);
+      if (!data) {
+        setError('Invalid credentials — or backend is offline');
+        setLoading(false);
+        return;
+      }
+      await setCookie(data.access_token);
       router.push('/');
-      return;
-    }
-
-    // ── 2. Real backend auth ─────────────────────────────────────────────────
-    const data = await postLogin(email, password);
-    if (!data) {
-      setError('Invalid credentials — or backend is offline');
+    } catch {
+      setError('Login failed — check your connection.');
       setLoading(false);
-      return;
     }
-
-    await setCookie(data.access_token);
-    router.push('/');
   }
 
   function fillDummy() {

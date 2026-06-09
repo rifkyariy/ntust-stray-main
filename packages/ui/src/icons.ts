@@ -49,11 +49,15 @@ export {
   Trash2,
   RefreshCw,
   Play,
+  Pause,
   Info,
   Save,
   TrendingUp,
   Dog,
   HelpCircle,
+  Layers,
+  Box,
+  RotateCcw,
 } from 'lucide-react';
 
 export type { LucideIcon, LucideProps } from 'lucide-react';

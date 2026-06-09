@@ -2,7 +2,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { Station, WSMessage } from '@stray/ui';
 import type { KPIData } from '../../lib/api';
-import { deriveKPIs } from '../../lib/api';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import Topbar from '../../components/Topbar';
 import KPIStrip from '../../components/KPIStrip';
@@ -14,21 +13,26 @@ import AddStationModal from '../../components/AddStationModal';
 
 interface DashboardClientProps {
   initialStations: Station[];
+  initialKpis: KPIData;
   token: string;
 }
 
-export default function DashboardClient({ initialStations, token }: DashboardClientProps) {
+export default function DashboardClient({ initialStations, initialKpis, token }: DashboardClientProps) {
   const [stations, setStations] = useState<Station[]>(initialStations);
-  const [kpis, setKpis] = useState<KPIData>(() => deriveKPIs(initialStations));
+  const [kpis, setKpis] = useState<KPIData>(initialKpis);
   const [selectedStation, setSelectedStation] = useState<Station | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [cityFilter, setCityFilter] = useState<string | undefined>();
   const [searchQuery, setSearchQuery] = useState('');
   const [latestMsg, setLatestMsg] = useState<WSMessage | null>(null);
 
-  // Re-derive KPIs whenever stations change (not inside the updater fn)
+  // Keep station-derived KPI fields live; preserve donation fields from server
   useEffect(() => {
-    setKpis(deriveKPIs(stations));
+    setKpis((prev) => ({
+      ...prev,
+      stations_online: stations.filter((s) => s.status !== 'offline').length,
+      active_alerts:   stations.filter((s) => s.status === 'offline' || s.status === 'low_food').length,
+    }));
   }, [stations]);
 
   const handleMessage = useCallback((msg: WSMessage) => {
@@ -47,6 +51,14 @@ export default function DashboardClient({ initialStations, token }: DashboardCli
                 status:       msg.food_pct < 20 ? 'low_food' : 'online',
               }
             : s,
+        ),
+      );
+    }
+
+    if (msg.type === 'station_status') {
+      setStations((prev) =>
+        prev.map((s) =>
+          s.station_code === msg.station_id ? { ...s, status: msg.status } : s,
         ),
       );
     }

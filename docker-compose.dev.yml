@@ -18,6 +18,9 @@ services:
     volumes:
       - ./apps/mobile:/app/apps/mobile
       - ./packages/ui:/app/packages/ui
+      - /app/node_modules
+      - /app/apps/mobile/node_modules
+      - /app/packages/ui/node_modules
     command: pnpm --filter @stray/mobile dev
 
   landing:
@@ -27,6 +30,9 @@ services:
     volumes:
       - ./apps/landing:/app/apps/landing
       - ./packages/ui:/app/packages/ui
+      - /app/node_modules
+      - /app/apps/landing/node_modules
+      - /app/packages/ui/node_modules
     command: pnpm --filter @stray/landing dev
 
   admin:
@@ -36,9 +42,15 @@ services:
     volumes:
       - ./apps/admin:/app/apps/admin
       - ./packages/ui:/app/packages/ui
+      - /app/node_modules
+      - /app/apps/admin/node_modules
+      - /app/packages/ui/node_modules
     environment:
       NEXT_PUBLIC_DETECTOR_URL: ${NEXT_PUBLIC_DETECTOR_URL:-http://localhost:8001}
     command: pnpm --filter @stray/admin dev
+
+  cloudflared:
+    profiles: ["tunnel"]  # only starts when: docker compose --profile tunnel up
 
   detector:
     build:

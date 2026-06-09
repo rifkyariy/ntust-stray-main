@@ -1,7 +1,8 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from datetime import datetime, timedelta
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, text
 from app.db.session import get_db
 from app.db.models import Donation, Station
 from app.core.schemas import DonationCreate, DonationOut
@@ -45,12 +46,34 @@ async def create_donation(
     return donation
 
 
+@router.get("/daily")
+async def daily_donation_counts(
+    station_id: uuid.UUID = Query(...),
+    days: int = Query(90, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Return donation counts per day (Asia/Taipei) for the last N days."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    stmt = (
+        select(
+            func.date(func.timezone("Asia/Taipei", Donation.created_at)).label("day"),
+            func.count().label("count"),
+        )
+        .where(Donation.station_id == station_id)
+        .where(Donation.created_at >= cutoff)
+        .group_by(text("day"))
+        .order_by(text("day"))
+    )
+    result = await db.execute(stmt)
+    return [{"date": str(row.day), "count": int(row.count)} for row in result.all()]
+
+
 @router.get("", response_model=list[DonationOut])
 async def list_donations(
     station_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> list[Donation]:
-    stmt = select(Donation).order_by(Donation.created_at.desc()).limit(100)
+    stmt = select(Donation).order_by(Donation.created_at.desc()).limit(200)
     if station_id:
         stmt = stmt.where(Donation.station_id == station_id)
     result = await db.execute(stmt)

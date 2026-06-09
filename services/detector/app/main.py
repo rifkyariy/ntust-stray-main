@@ -1,14 +1,17 @@
+import asyncio
 import io
-import os
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from PIL import Image
 
-from app.detector import run_detection
+from app import detector
 from app.schemas import DetectionResponse
 
-app = FastAPI(title="Stray Detector", version="0.1.0")
+_executor = ThreadPoolExecutor(max_workers=1)
+
+app = FastAPI(title="Stray Detector", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,33 +23,34 @@ app.add_middleware(
 
 
 @app.get("/health")
-def health() -> dict:
+async def health() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/models")
-def list_models() -> dict:
-    """List available YOLO models and current model in use."""
-    models = sorted([f.stem for f in Path("/app").glob("*.pt")])
-    current = os.getenv("YOLO_MODEL", "catFinderV14_yoloWeights.pt")
-    return {
-        "available_models": models,
-        "current_model": current,
-        "to_switch": "Set YOLO_MODEL environment variable and restart"
-    }
+@app.get("/config")
+def get_config() -> dict:
+    return detector.get_config()
+
+
+class ModelSwitchRequest(BaseModel):
+    model: str
+
+
+@app.post("/config/model")
+def switch_model(req: ModelSwitchRequest) -> dict:
+    return detector.set_model(req.model)
 
 
 @app.post("/detect", response_model=DetectionResponse)
 async def detect(
-    file: UploadFile = File(..., description="JPEG/PNG video frame"),
-    conf: float = Query(default=0.45, ge=0.1, le=0.95, description="Confidence threshold"),
-    iou:  float = Query(default=0.45, ge=0.1, le=0.9,  description="IoU threshold"),
+    file: UploadFile = File(...),
+    conf:    float = Query(default=0.15, ge=0.05, le=0.95),
+    iou:     float = Query(default=0.45, ge=0.1,  le=0.9),
+    imgsz:   int   = Query(default=960,  ge=320,  le=1536),
+    augment: bool  = Query(default=False),
 ) -> DetectionResponse:
     if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
-        raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported media type: {file.content_type}",
-        )
+        raise HTTPException(status_code=415, detail=f"Unsupported media type: {file.content_type}")
 
     data = await file.read()
     try:
@@ -54,6 +58,8 @@ async def detect(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Cannot decode image: {exc}") from exc
 
-    detections, inference_ms = run_detection(image, conf_threshold=conf, iou_threshold=iou)
-
-    return DetectionResponse(detections=detections, inference_ms=inference_ms)
+    loop = asyncio.get_event_loop()
+    detections, inference_ms, is_seg = await loop.run_in_executor(
+        _executor, lambda: detector.run_detection(image, conf, iou, imgsz, augment)
+    )
+    return DetectionResponse(detections=detections, inference_ms=inference_ms, is_segmentation=is_seg)

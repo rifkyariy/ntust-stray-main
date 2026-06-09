@@ -1,443 +1,1181 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Video, Wifi, WifiOff, RefreshCw, Play, Trash2, Cat, Dog, HelpCircle, ScanLine,
+  useCallback, useEffect, useMemo, useRef, useState,
+  type CSSProperties, type ReactNode,
+} from 'react';
+import {
+  Cat, Wifi, WifiOff, RefreshCw, Play, Pause, Trash2, ScanLine,
+  ChevronDown, Layers, Box, Clock, BarChart2, RotateCcw,
 } from '@stray/ui';
 
-/* ── Types ─────────────────────────────────────────────────────────────────── */
-
-type StreamSource = 'demo' | 'espcam';
-type AnimalType   = 'cat' | 'dog' | 'other';
+/* ── Types ──────────────────────────────────────────────────────────────────── */
 
 interface BBox { x: number; y: number; w: number; h: number }
 
 interface Detection {
   id: string;
-  timestamp: Date;
-  animal: AnimalType;
+  videoTime: number;
   confidence: number;
   bbox: BBox;
-  inference_ms?: number;
+  track_id: number | null;
+  mask: number[][] | null;
 }
 
-/* ── Constants ─────────────────────────────────────────────────────────────── */
+interface CatSighting { videoTime: number; conf: number; }
+interface VisitSegment { start: number; end: number; }
 
-const ANIMAL_COLORS: Record<string, string> = {
-  cat:   'var(--orange-500)',
-  dog:   '#3b82f6',
-  other: 'var(--slate-400)',
+interface CatStats {
+  trackId:    number;
+  color:      string;
+  sightings:  CatSighting[];
+  visits:     VisitSegment[];
+  visitCount: number;
+  lastSeen:   number;
+  avgConf:    number;
+}
+
+/* ── Tokens ─────────────────────────────────────────────────────────────────── */
+
+const D = {
+  bg:        '#0d1117',
+  card:      '#161b22',
+  cardHov:   '#1c2128',
+  border:    '#30363d',
+  text:      '#e6edf3',
+  muted:     '#8b949e',
+  orange:    '#f97316',
+  orangeDim: 'rgba(249,115,22,0.12)',
+  green:     '#22c55e',
+  red:       '#ef4444',
+  purple:    '#a855f7',
 };
 
-const ANIMAL_ICONS: Record<string, React.ReactNode> = {
-  cat:   <Cat   size={14} />,
-  dog:   <Dog   size={14} />,
-  other: <HelpCircle size={14} />,
-};
+const PALETTE = [
+  '#f97316','#3b82f6','#22c55e','#a855f7','#ec4899',
+  '#14b8a6','#eab308','#ef4444','#06b6d4','#84cc16',
+];
+const tColor = (id: number | null) =>
+  id == null ? D.muted : PALETTE[id % PALETTE.length];
 
-const ANIMAL_BG: Record<string, string> = {
-  cat:   'var(--orange-50)',
-  dog:   '#eff6ff',
-  other: 'var(--slate-100)',
-};
+/* ── Helpers ─────────────────────────────────────────────────────────────────── */
 
-/* ── Detection row ──────────────────────────────────────────────────────────── */
+const GAP_S = 3;
 
-function EventRow({ d }: { d: Detection }) {
-  const pct = Math.round(d.confidence * 100);
-  const color = ANIMAL_COLORS[d.animal];
+function computeVisits(times: number[]): VisitSegment[] {
+  if (!times.length) return [];
+  const s = [...times].sort((a, b) => a - b);
+  const out: VisitSegment[] = [];
+  let seg = { start: s[0], end: s[0] };
+  for (let i = 1; i < s.length; i++) {
+    if (s[i] - seg.end > GAP_S) { out.push(seg); seg = { start: s[i], end: s[i] }; }
+    else seg.end = s[i];
+  }
+  out.push(seg);
+  return out;
+}
+
+function fmtVT(s: number) {
+  const abs = Math.abs(s);
+  return `${Math.floor(abs / 60)}:${String(Math.floor(abs % 60)).padStart(2, '0')}`;
+}
+
+function modelLabel(p: string) { return p.replace(/.*\//, '').replace('.pt', ''); }
+
+/* ── Sparkline ───────────────────────────────────────────────────────────────── */
+
+function Sparkline({ data, color }: { data: number[]; color: string }) {
+  const pts = data.slice(-24);
+  if (pts.length < 2) return <span style={{ color: D.muted, fontSize: 10, fontFamily: 'monospace' }}>—</span>;
+  const W = 56; const H = 18;
+  const path = pts.map((v, i) => {
+    const x = (i / (pts.length - 1)) * W;
+    const y = H - v * (H - 3) - 1;
+    return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
   return (
-    <div
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: '8px 14px',
-        borderBottom: '1px solid var(--slate-100)',
-        animation: 'fadeSlideIn 0.2s ease-out',
-      }}
-    >
-      <div
-        style={{
-          width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-          background: ANIMAL_BG[d.animal], color,
+    <svg width={W} height={H} style={{ display: 'block', flexShrink: 0 }}>
+      <path d={path} fill="none" stroke={color} strokeWidth={1.5}
+        strokeLinecap="round" strokeLinejoin="round" opacity={0.75} />
+      <circle cx={(W).toFixed(1)}
+        cy={(H - pts[pts.length - 1] * (H - 3) - 1).toFixed(1)}
+        r={2.5} fill={color} />
+    </svg>
+  );
+}
+
+/* ── Video scrubber ──────────────────────────────────────────────────────────── */
+
+function Scrubber({
+  currentTime, duration, onSeekStart, onSeek, onSeekEnd, paused, onTogglePlay, scanDone, onReplay,
+}: {
+  currentTime: number; duration: number;
+  onSeekStart: () => void;
+  onSeek: (t: number) => void;
+  onSeekEnd: () => void;
+  paused: boolean; onTogglePlay: () => void;
+  scanDone: boolean; onReplay: () => void;
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '7px 12px', borderTop: `1px solid ${D.border}`,
+    }}>
+      {scanDone ? (
+        <button onClick={onReplay} title="Replay from start" style={{
+          width: 26, height: 26, borderRadius: 6,
+          border: `1px solid ${D.border}`, background: D.orangeDim,
+          color: D.orange, cursor: 'pointer', flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
-      >
-        {ANIMAL_ICONS[d.animal]}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--slate-800)', textTransform: 'capitalize' }}>
-            {d.animal}
-            {d.inference_ms != null && (
-              <span style={{ fontSize: 10, color: 'var(--slate-400)', fontFamily: 'var(--font-mono)', marginLeft: 6 }}>
-                {d.inference_ms.toFixed(0)}ms
-              </span>
-            )}
-          </span>
-          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--slate-400)' }}>
-            {d.timestamp.toTimeString().slice(0, 8)}
-          </span>
+        }}>
+          <RotateCcw size={11} />
+        </button>
+      ) : (
+        <button onClick={onTogglePlay} style={{
+          width: 26, height: 26, borderRadius: 6,
+          border: `1px solid ${D.border}`, background: D.cardHov,
+          color: D.text, cursor: 'pointer', flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          {paused ? <Play size={11} /> : <Pause size={11} />}
+        </button>
+      )}
+
+      <span style={{ fontSize: 10, fontFamily: 'monospace', color: D.muted, minWidth: 28, flexShrink: 0 }}>
+        {fmtVT(currentTime)}
+      </span>
+
+      <input
+        type="range" min={0} max={duration || 100} step={0.1}
+        value={currentTime}
+        onMouseDown={onSeekStart}
+        onTouchStart={onSeekStart}
+        onChange={e => onSeek(parseFloat(e.target.value))}
+        onMouseUp={onSeekEnd}
+        onTouchEnd={onSeekEnd}
+        style={{ flex: 1, accentColor: D.orange, cursor: 'pointer', margin: 0 }}
+      />
+
+      <span style={{ fontSize: 10, fontFamily: 'monospace', color: D.muted, minWidth: 28, textAlign: 'right', flexShrink: 0 }}>
+        {fmtVT(duration)}
+      </span>
+
+      {scanDone && (
+        <span style={{
+          fontSize: 9, fontFamily: 'monospace', color: D.green,
+          background: `${D.green}18`, border: `1px solid ${D.green}40`,
+          borderRadius: 10, padding: '2px 7px', flexShrink: 0,
+        }}>
+          {SCAN_PASSES} passes complete
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ── Presence timeline (Gantt) ───────────────────────────────────────────────── */
+
+function PresenceTimeline({
+  stats, duration, cursor,
+}: {
+  stats: CatStats[]; duration: number; cursor: number;
+}) {
+  const range = Math.max(duration, 1);
+  const xp = (t: number) => `${Math.min(Math.max(t / range * 100, 0), 100).toFixed(2)}%`;
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+
+  return (
+    <div>
+      {stats.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 0', color: D.muted }}>
+          <ScanLine size={15} strokeWidth={1.3} />
+          <span style={{ fontSize: 11, fontFamily: 'monospace' }}>No cats yet — play the video to scan</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-          <div style={{ flex: 1, height: 4, background: 'var(--slate-100)', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${pct}%`, background: pct >= 85 ? 'var(--orange-500)' : pct >= 70 ? '#f59e0b' : 'var(--slate-300)', borderRadius: 2 }} />
+      ) : (
+        <>
+          {/* Rows (scrollable if many cats) */}
+          <div style={{ overflowY: 'auto', maxHeight: 176 }}>
+            {stats.map(cat => (
+              <div key={cat.trackId} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 44, flexShrink: 0 }}>
+                  <Cat size={10} color={cat.color} />
+                  <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'monospace', color: cat.color }}>
+                    #{cat.trackId}
+                  </span>
+                </div>
+                {/* Track area */}
+                <div style={{ flex: 1, height: 10, background: D.border, borderRadius: 5, position: 'relative' }}>
+                  {cat.visits.map((v, j) => (
+                    <div key={j} style={{
+                      position: 'absolute', top: 0, height: '100%',
+                      left: xp(v.start),
+                      width: `${Math.max((v.end === v.start ? 0.5 : v.end - v.start) / range * 100, 0.4).toFixed(2)}%`,
+                      background: cat.color, borderRadius: 3, opacity: 0.88,
+                    }} />
+                  ))}
+                  {/* Cursor */}
+                  <div style={{
+                    position: 'absolute', top: -4, bottom: -4, width: 2,
+                    left: xp(cursor), transform: 'translateX(-50%)',
+                    background: D.orange, borderRadius: 1,
+                    boxShadow: `0 0 5px ${D.orange}88`, zIndex: 2, pointerEvents: 'none',
+                  }} />
+                </div>
+                <span style={{ fontSize: 9, color: D.muted, fontFamily: 'monospace', minWidth: 18, textAlign: 'right', flexShrink: 0 }}>
+                  {cat.visitCount}×
+                </span>
+              </div>
+            ))}
           </div>
-          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--slate-600)', minWidth: 30 }}>
-            {pct}%
-          </span>
-        </div>
+
+          {/* Time axis */}
+          <div style={{ position: 'relative', height: 14, marginLeft: 52, marginTop: 3 }}>
+            {ticks.map(f => (
+              <span key={f} style={{
+                position: 'absolute', left: `${f * 100}%`, transform: 'translateX(-50%)',
+                fontSize: 9, color: D.muted, fontFamily: 'monospace',
+              }}>
+                {fmtVT(f * duration)}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ── Slider control ──────────────────────────────────────────────────────────── */
+
+function DarkSlider({ label, value, min, max, step, onChange, fmt: fmtFn }: {
+  label: string; value: number; min: number; max: number; step: number;
+  onChange: (v: number) => void; fmt?: (v: number) => string;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ fontSize: 10, color: D.muted, fontFamily: 'monospace', minWidth: 32, flexShrink: 0 }}>{label}</span>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={e => onChange(parseFloat(e.target.value))}
+        style={{ flex: 1, accentColor: D.orange, cursor: 'pointer' }} />
+      <span style={{ fontSize: 11, fontFamily: 'monospace', fontWeight: 700, color: D.orange, minWidth: 36, textAlign: 'right', flexShrink: 0 }}>
+        {fmtFn ? fmtFn(value) : value}
+      </span>
+    </div>
+  );
+}
+
+/* ── Segmented control ───────────────────────────────────────────────────────── */
+
+function Segmented<T extends string | number>({ label, value, options, onChange }: {
+  label: string; value: T;
+  options: { value: T; label: string; sub?: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ fontSize: 10, color: D.muted, fontFamily: 'monospace', minWidth: 32, flexShrink: 0 }}>{label}</span>
+      <div style={{
+        flex: 1, display: 'flex', gap: 2, padding: 2,
+        background: D.cardHov, border: `1px solid ${D.border}`, borderRadius: 8,
+      }}>
+        {options.map(o => {
+          const active = o.value === value;
+          return (
+            <button key={String(o.value)} onClick={() => onChange(o.value)} style={{
+              flex: 1, border: 'none', cursor: 'pointer', borderRadius: 6,
+              padding: '4px 0', lineHeight: 1.1,
+              background: active ? D.orange : 'transparent',
+              color: active ? '#fff' : D.muted,
+              fontSize: 11, fontWeight: 700, fontFamily: 'monospace',
+              transition: 'background 0.12s',
+            }}>
+              {o.label}
+              {o.sub && <div style={{ fontSize: 8, fontWeight: 500, opacity: 0.8 }}>{o.sub}</div>}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-/* ── Main component ─────────────────────────────────────────────────────────── */
+/* ── Toggle ──────────────────────────────────────────────────────────────────── */
 
-interface StreamClientProps {
-  detectorUrl: string;
+function Toggle({ label, sub, value, onChange }: {
+  label: string; sub?: string; value: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <div>
+        <div style={{ fontSize: 11, color: D.text, fontFamily: 'monospace', fontWeight: 600 }}>{label}</div>
+        {sub && <div style={{ fontSize: 9, color: D.muted, fontFamily: 'monospace', marginTop: 1 }}>{sub}</div>}
+      </div>
+      <button onClick={() => onChange(!value)} style={{
+        width: 38, height: 22, borderRadius: 11, flexShrink: 0,
+        border: `1px solid ${value ? D.orange : D.border}`,
+        background: value ? D.orange : D.cardHov,
+        position: 'relative', cursor: 'pointer', transition: 'all 0.15s', padding: 0,
+      }}>
+        <span style={{
+          position: 'absolute', top: 2, left: value ? 18 : 2,
+          width: 16, height: 16, borderRadius: '50%', background: '#fff',
+          transition: 'left 0.15s',
+        }} />
+      </button>
+    </div>
+  );
 }
 
-export default function StreamClient({ detectorUrl }: StreamClientProps) {
-  const videoRef        = useRef<HTMLVideoElement>(null);
-  const captureCanvas   = useRef<HTMLCanvasElement>(null);
-  const [source, setSource]           = useState<StreamSource>('demo');
-  const [streamUrl, setStreamUrl]     = useState('http://192.168.1.100/stream');
-  const [conf, setConf]               = useState(0.45);
-  const [imgError, setImgError]       = useState(false);
-  const [detectorOnline, setDetectorOnline] = useState<boolean | null>(null);
-  const [detections, setDetections]   = useState<Detection[]>([]);
-  const [activeBoxes, setActiveBoxes] = useState<Detection[]>([]);
-  const [inferMs, setInferMs]         = useState<number | null>(null);
+/* ── Model picker ────────────────────────────────────────────────────────────── */
 
-  /* ── Probe detector health once on mount ── */
+function ModelPicker({ current, models, switching, onSelect }: {
+  current: string; models: string[]; switching: boolean; onSelect: (m: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const detect = models.filter(m => !m.includes('-seg'));
+  const seg    = models.filter(m =>  m.includes('-seg'));
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '7px 11px', borderRadius: 8,
+        background: D.cardHov, border: `1px solid ${D.border}`,
+        color: switching ? D.muted : D.text,
+        fontSize: 12, fontFamily: 'monospace', cursor: 'pointer',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          {current.includes('-seg') ? <Layers size={12} color={D.purple} /> : <Box size={12} color={D.muted} />}
+          <span>{switching ? 'Loading…' : modelLabel(current)}</span>
+        </div>
+        <ChevronDown size={12} color={D.muted} />
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+          background: D.card, border: `1px solid ${D.border}`,
+          borderRadius: 8, boxShadow: '0 12px 32px rgba(0,0,0,0.7)', overflow: 'hidden',
+        }}>
+          {([
+            { label: 'DETECTION',    items: detect, Icon: Box,    activeColor: D.orange },
+            { label: 'SEGMENTATION', items: seg,    Icon: Layers, activeColor: D.purple },
+          ] as const).filter(g => g.items.length > 0).map(({ label, items, Icon, activeColor }, gi) => (
+            <div key={label}>
+              <div style={{
+                padding: '6px 10px 3px', fontSize: 9, color: D.muted,
+                fontFamily: 'monospace', letterSpacing: '0.1em',
+                borderTop: gi > 0 ? `1px solid ${D.border}` : 'none',
+              }}>{label}</div>
+              {items.map(m => (
+                <button key={m} onClick={() => { onSelect(m); setOpen(false); }} style={{
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '7px 12px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                  background: m === current ? `${activeColor}18` : 'transparent',
+                  color: m === current ? activeColor : D.text,
+                  fontSize: 12, fontFamily: 'monospace',
+                }}>
+                  <Icon size={11} color={m === current ? activeColor : D.muted} />
+                  {modelLabel(m)}
+                  {m === current && <span style={{ marginLeft: 'auto', fontSize: 9, color: D.muted }}>active</span>}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Card wrapper ────────────────────────────────────────────────────────────── */
+
+function Card({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  return (
+    <div style={{
+      background: D.card, border: `1px solid ${D.border}`,
+      borderRadius: 12, overflow: 'hidden', ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function CardHeader({ title, icon, badge, action }: {
+  title: string; icon: ReactNode; badge?: ReactNode; action?: ReactNode;
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '9px 14px', borderBottom: `1px solid ${D.border}`, flexShrink: 0,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {icon}
+        <span style={{ fontSize: 12, fontWeight: 700, color: D.text }}>{title}</span>
+        {badge}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function Pill({ children, color }: { children: ReactNode; color: string }) {
+  return (
+    <span style={{
+      fontSize: 10, fontFamily: 'monospace', padding: '1px 7px', borderRadius: 20,
+      background: `${color}18`, border: `1px solid ${color}30`, color,
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+    }}>{children}</span>
+  );
+}
+
+/* ── Main ────────────────────────────────────────────────────────────────────── */
+
+const SCAN_PASSES = 3;
+
+export default function StreamClient({ detectorUrl, embedded = false }: { detectorUrl: string; embedded?: boolean }) {
+  const videoRef      = useRef<HTMLVideoElement>(null);
+  const captureCanvas = useRef<HTMLCanvasElement>(null);
+  /* prevent onTimeUpdate from fighting slider drag */
+  const isSeekingRef        = useRef(false);
+  /* prevent re-capturing the same video timestamp during a slow detection round-trip */
+  const lastCapturedTimeRef = useRef(-1);
+  /* only one detection request in flight at a time — inference can take 1–4s on CPU */
+  const inFlightRef         = useRef(false);
+  /* closure-safe pass counter + history (avoid stale closure in onEnded) */
+  const passCountRef        = useRef(0);
+  const detectionHistoryRef = useRef<Detection[]>([]);
+
+  /* video state */
+  const [source, setSource]           = useState<'demo' | 'espcam'>('demo');
+  const [streamUrl, setStreamUrl]     = useState('http://192.168.1.100/stream');
+  const [imgError, setImgError]       = useState(false);
+  const [videoAspect, setVideoAspect] = useState<number | null>(null);
+  const [videoTime, setVideoTime]     = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [paused, setPaused]           = useState(false);
+  /* multi-pass scan state */
+  const [passCount, setPassCount]     = useState(0);   // display only
+  const [scanDone, setScanDone]       = useState(false);
+
+  /* detector state */
+  const [detectorOnline, setDetectorOnline]   = useState<boolean | null>(null);
+  const [inferMs, setInferMs]                 = useState<number | null>(null);
+  const [conf, setConf]                       = useState(0.15);
+  const [iou, setIou]                         = useState(0.45);
+  const [imgsz, setImgsz]                     = useState(960);   // inference resolution
+  const [augment, setAugment]                 = useState(false); // test-time augmentation
+  const [currentModel, setCurrentModel]       = useState('yolo26/yolo26l.pt');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [switching, setSwitching]             = useState(false);
+  const [showSidePanel, setShowSidePanel]     = useState(true);
+
+  /* isSeg always derived from model path — never separate state */
+  const isSeg = currentModel.includes('-seg');
+
+  /* detection data */
+  const [activeBoxes, setActiveBoxes]         = useState<Detection[]>([]);
+  const [detectionHistory, setDetectionHistory] = useState<Detection[]>([]);
+  const [catLogs, setCatLogs]                 = useState<Map<number, CatSighting[]>>(new Map());
+
+  /* ── Config on mount ── */
   useEffect(() => {
-    fetch(`${detectorUrl}/health`)
-      .then(r => setDetectorOnline(r.ok))
+    fetch(`${detectorUrl}/config`)
+      .then(r => r.json())
+      .then(cfg => {
+        setCurrentModel(cfg.model ?? 'yolo26/yolo26l.pt');
+        setAvailableModels(cfg.models ?? []);
+        if (typeof cfg.imgsz === 'number') setImgsz(cfg.imgsz);
+        if (typeof cfg.augment === 'boolean') setAugment(cfg.augment);
+        setDetectorOnline(true);
+      })
       .catch(() => setDetectorOnline(false));
   }, [detectorUrl]);
 
-  /* ── Frame capture + inference loop ── */
+  /* ── Model switch ── */
+  const switchModel = useCallback(async (path: string) => {
+    if (path === currentModel) return;
+    setSwitching(true);
+    setActiveBoxes([]);
+    try {
+      const res = await fetch(`${detectorUrl}/config/model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: path }),
+      });
+      if (res.ok) {
+        const cfg = await res.json();
+        setCurrentModel(cfg.model);
+      }
+    } finally {
+      setSwitching(false);
+    }
+  }, [currentModel, detectorUrl]);
+
+  /* ── Video controls ── */
+  const handleSeekStart = useCallback(() => { isSeekingRef.current = true; }, []);
+  const handleSeekEnd   = useCallback(() => { isSeekingRef.current = false; }, []);
+  const handleSeek      = useCallback((t: number) => {
+    setVideoTime(t);
+    if (videoRef.current) videoRef.current.currentTime = t;
+  }, []);
+
+  const handleTogglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) { v.play(); setPaused(false); } else { v.pause(); setPaused(true); }
+  }, []);
+
+  /* ── Finalize: dedup history across passes, rebuild catLogs chronologically ── */
+  const finalizeTimeline = useCallback((history: Detection[]) => {
+    const BUCKET = 0.5; // seconds — merge detections within this window per track
+    const best = new Map<string, Detection>();
+    for (const d of history) {
+      if (d.track_id == null) continue;
+      const key = `${d.track_id}-${Math.round(d.videoTime / BUCKET)}`;
+      const prev = best.get(key);
+      if (!prev || d.confidence > prev.confidence) best.set(key, d);
+    }
+    const dedupedSorted = [...best.values()].sort((a, b) => a.videoTime - b.videoTime);
+
+    /* rebuild catLogs from deduped, chronological data */
+    const newLogs = new Map<number, CatSighting[]>();
+    for (const d of dedupedSorted) {
+      if (d.track_id == null) continue;
+      const arr = newLogs.get(d.track_id) ?? [];
+      arr.push({ videoTime: d.videoTime, conf: d.confidence });
+      newLogs.set(d.track_id, arr);
+    }
+    setCatLogs(newLogs);
+    setDetectionHistory(dedupedSorted);
+    detectionHistoryRef.current = dedupedSorted;
+  }, []);
+
+  /* ── Called on every video 'ended' event ── */
+  const handleVideoEnd = useCallback(() => {
+    passCountRef.current += 1;
+    setPassCount(passCountRef.current);
+
+    if (passCountRef.current < SCAN_PASSES) {
+      /* auto-replay for next pass — reset capture pointer */
+      lastCapturedTimeRef.current = -1;
+      const v = videoRef.current;
+      if (v) { v.currentTime = 0; v.play().catch(() => {}); }
+    } else {
+      /* all passes done — finalize and enter review mode */
+      setScanDone(true);
+      setPaused(true);
+      finalizeTimeline(detectionHistoryRef.current);
+    }
+  }, [finalizeTimeline]);
+
+  const handleReplay = useCallback(() => {
+    /* clear all recorded data and restart from pass 1 */
+    passCountRef.current = 0;
+    detectionHistoryRef.current = [];
+    setPassCount(0);
+    setDetectionHistory([]);
+    setCatLogs(new Map());
+    setActiveBoxes([]);
+    setScanDone(false);
+    lastCapturedTimeRef.current = -1;
+    const v = videoRef.current;
+    if (v) { v.currentTime = 0; v.play().catch(() => {}); setPaused(false); }
+  }, []);
+
+  /* ── Capture & detect one frame ── */
   const captureAndDetect = useCallback(async () => {
     const video  = videoRef.current;
     const canvas = captureCanvas.current;
-    if (!video || !canvas) return;
-    if (video.readyState < 2) return;
+    if (!video || !canvas || video.readyState < 2) return;
+    /* skip if video is paused / ended */
+    if (video.paused || video.ended) return;
+    /* only one request in flight — inference can take 1–4s; never queue a backlog */
+    if (inFlightRef.current) return;
+    /* skip if we already captured this timestamp */
+    const vt = video.currentTime;
+    if (vt - lastCapturedTimeRef.current < 0.2) return;
+    lastCapturedTimeRef.current = vt;
 
-    const w = video.videoWidth  || 640;
-    const h = video.videoHeight || 480;
-    canvas.width  = w;
-    canvas.height = h;
+    const w = video.videoWidth || 640, h = video.videoHeight || 480;
+    canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, w, h);
 
+    inFlightRef.current = true;
     canvas.toBlob(async blob => {
-      if (!blob) return;
+      if (!blob) { inFlightRef.current = false; return; }
       const form = new FormData();
       form.append('file', blob, 'frame.jpg');
       try {
         const res = await fetch(
-          `${detectorUrl}/detect?conf=${conf}`,
-          { method: 'POST', body: form },
-        );
+          `${detectorUrl}/detect?conf=${conf}&iou=${iou}&imgsz=${imgsz}&augment=${augment}`,
+          { method: 'POST', body: form });
         if (!res.ok) return;
-        const data: { detections: Array<{ animal: string; confidence: number; bbox: BBox; class_id: number; class_name: string }>; inference_ms: number } = await res.json();
+        const data: {
+          detections: Array<{
+            confidence: number; bbox: BBox;
+            track_id?: number | null; mask?: number[][] | null;
+          }>;
+          inference_ms: number;
+        } = await res.json();
 
         setInferMs(data.inference_ms);
         setDetectorOnline(true);
+        if (!data.detections.length) { setActiveBoxes([]); return; }
 
-        if (data.detections.length === 0) {
-          setActiveBoxes([]);
-          return;
-        }
-
-        const mapped: Detection[] = data.detections.map(d => ({
-          id: Math.random().toString(36).slice(2),
-          timestamp: new Date(),
-          animal: d.animal as AnimalType,
+        const boxes: Detection[] = data.detections.map(d => ({
+          id: `${vt.toFixed(2)}-${Math.random().toString(36).slice(2)}`,
+          videoTime: vt,
           confidence: d.confidence,
           bbox: d.bbox,
-          inference_ms: data.inference_ms,
+          track_id: d.track_id ?? null,
+          mask: d.mask ?? null,
         }));
 
-        setActiveBoxes(mapped);
-        setDetections(prev => [...mapped, ...prev].slice(0, 150));
-
-        // clear boxes after 1.5 s (next frame arrives by then)
+        setActiveBoxes(boxes);
         setTimeout(() => setActiveBoxes([]), 1400);
+
+        /* append to permanent history (ref stays in sync for closure-safe finalize) */
+        detectionHistoryRef.current = [...detectionHistoryRef.current, ...boxes];
+        setDetectionHistory(detectionHistoryRef.current);
+
+        /* update per-cat logs */
+        setCatLogs(prev => {
+          const next = new Map(prev);
+          boxes.forEach(b => {
+            if (b.track_id == null) return;
+            const arr = next.get(b.track_id) ?? [];
+            next.set(b.track_id, [...arr, { videoTime: vt, conf: b.confidence }]);
+          });
+          return next;
+        });
       } catch {
         setDetectorOnline(false);
+      } finally {
+        inFlightRef.current = false;
       }
-    }, 'image/jpeg', 0.85);
-  }, [detectorUrl, conf]);
+    }, 'image/jpeg', 0.92);
+  }, [detectorUrl, conf, iou, imgsz, augment]);
 
+  /* detection loop — only while demo video playing and scan not finished.
+     The in-flight guard means each tick just asks "can I capture yet?", so a
+     short interval simply minimises the gap after each inference completes. */
   useEffect(() => {
-    if (source !== 'demo') return;
-    const id = setInterval(captureAndDetect, 500);
+    if (source !== 'demo' || scanDone) return;
+    const id = setInterval(captureAndDetect, 250);
     return () => clearInterval(id);
-  }, [source, captureAndDetect]);
+  }, [source, scanDone, captureAndDetect]);
 
-  /* ── Auto-play demo video ── */
+  /* Slow playback while scanning so detection (1–4s/frame on CPU) covers more
+     of the video; restore full speed once the scan is finalised for review. */
   useEffect(() => {
-    if (source !== 'demo') return;
-    videoRef.current?.play().catch(() => {});
+    const v = videoRef.current;
+    if (!v) return;
+    v.playbackRate = scanDone ? 1 : 0.5;
+  }, [scanDone, passCount]);
+
+  /* auto-play on mount */
+  useEffect(() => {
+    if (source === 'demo') videoRef.current?.play().catch(() => {});
   }, [source]);
 
-  const catCount   = detections.filter(d => d.animal === 'cat').length;
-  const dogCount   = detections.filter(d => d.animal === 'dog').length;
+  /* ── Cat stats ── */
+  const catStats = useMemo<CatStats[]>(() => {
+    const out: CatStats[] = [];
+    catLogs.forEach((sightings, trackId) => {
+      const times  = sightings.map(s => s.videoTime);
+      const visits = computeVisits(times);
+      const confs  = sightings.map(s => s.conf);
+      out.push({
+        trackId, color: tColor(trackId), sightings, visits,
+        visitCount: visits.length,
+        lastSeen: times[times.length - 1],
+        avgConf: confs.reduce((a, b) => a + b, 0) / confs.length,
+      });
+    });
+    return out.sort((a, b) => a.trackId - b.trackId);
+  }, [catLogs]);
+
+  /*
+   * displayBoxes: during the scan, show live boxes; after scan done,
+   * show historical detections closest to the scrubber position so
+   * seeked frames show their recorded bboxes/masks.
+   */
+  const displayBoxes = useMemo<Detection[]>(() => {
+    if (scanDone) {
+      return detectionHistory.filter(d => Math.abs(d.videoTime - videoTime) < 0.45);
+    }
+    return activeBoxes;
+  }, [scanDone, detectionHistory, videoTime, activeBoxes]);
+
+  const uniqueCats  = catStats.length;
+  const totalVisits = catStats.reduce((s, c) => s + c.visitCount, 0);
+  const statusColor = detectorOnline === true ? D.green : detectorOnline === false ? D.red : D.muted;
+
+  const scrollStyle: CSSProperties = {
+    overflowY: 'auto',
+    scrollbarWidth: 'thin',
+    scrollbarColor: `${D.border} transparent`,
+  };
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20, height: '100%', boxSizing: 'border-box' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    /* A bounded height makes the dashboard fixed-size so inner panels scroll
+       instead of growing the page. Full-page (/stream) fills the viewport;
+       embedded (station accordion) uses a capped height with rounded chrome. */
+    <div style={{
+      padding: embedded ? 14 : 18, display: 'flex', flexDirection: 'column', gap: 12,
+      height: embedded ? 'min(82dvh, 780px)' : '100dvh',
+      boxSizing: 'border-box', background: D.bg, overflow: 'hidden',
+      borderRadius: embedded ? 16 : 0,
+      border: embedded ? `1px solid ${D.border}` : 'none',
+    }}>
+
+      {/* ── Header ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--slate-900)', letterSpacing: '-0.02em', margin: 0 }}>
-            Live Stream
-          </h1>
-          <p style={{ fontSize: 13, color: 'var(--slate-400)', marginTop: 4 }}>
-            YOLOv8 real-time detection · {detections.length} events this session
+          {!embedded && (
+            <h1 style={{ fontSize: 19, fontWeight: 800, color: D.text, letterSpacing: '-0.02em', margin: 0 }}>
+              Cat Stream Monitor
+            </h1>
+          )}
+          <p style={{ fontSize: 11, color: D.muted, marginTop: embedded ? 0 : 2, fontFamily: 'monospace' }}>
+            {modelLabel(currentModel)} · {isSeg ? 'segmentation' : 'detection'} ·{' '}
+            {scanDone
+              ? `${uniqueCats} cat${uniqueCats !== 1 ? 's' : ''} · ${totalVisits} visits · ${SCAN_PASSES}-pass scan`
+              : passCount >= SCAN_PASSES
+                ? 'Finalizing…'
+                : `scanning pass ${passCount + 1} of ${SCAN_PASSES}…`}
           </p>
         </div>
-
-        {/* Detector status pill */}
-        <div
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '5px 12px', borderRadius: 20,
-            background: detectorOnline === true ? 'var(--orange-50)' : detectorOnline === false ? '#fef2f2' : 'var(--slate-100)',
-            border: `1.5px solid ${detectorOnline === true ? 'var(--orange-200)' : detectorOnline === false ? '#fecaca' : 'var(--slate-200)'}`,
-          }}
-        >
-          <span style={{
-            width: 7, height: 7, borderRadius: '50%',
-            background: detectorOnline === true ? 'var(--orange-500)' : detectorOnline === false ? '#ef4444' : 'var(--slate-400)',
-            animation: detectorOnline === true ? 'stray-pulse 1.4s infinite' : 'none',
-          }} />
-          <span style={{
-            fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
-            color: detectorOnline === true ? 'var(--orange-600)' : detectorOnline === false ? '#dc2626' : 'var(--slate-500)',
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 7,
+            padding: '5px 12px', borderRadius: 20, background: D.card, border: `1px solid ${D.border}`,
           }}>
-            {detectorOnline === null ? 'CONNECTING' : detectorOnline ? 'DETECTOR ONLINE' : 'DETECTOR OFFLINE'}
-          </span>
-          {inferMs != null && detectorOnline && (
-            <span style={{ fontSize: 10, color: 'var(--slate-400)', fontFamily: 'var(--font-mono)' }}>
-              {inferMs.toFixed(0)}ms
+            <span style={{
+              width: 7, height: 7, borderRadius: '50%', background: statusColor, flexShrink: 0,
+              boxShadow: detectorOnline ? `0 0 6px ${statusColor}` : 'none',
+              animation: detectorOnline === true ? 'stray-pulse 1.4s infinite' : 'none',
+            }} />
+            <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: statusColor, letterSpacing: '0.05em' }}>
+              {detectorOnline === null ? 'CONNECTING' : detectorOnline ? 'ONLINE' : 'OFFLINE'}
             </span>
-          )}
-        </div>
-      </div>
-
-      {/* Main layout: player + panel */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 16, flex: 1, minHeight: 0 }}>
-
-        {/* ── Video player ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div
+            {inferMs != null && detectorOnline && (
+              <span style={{ fontSize: 10, color: D.muted, fontFamily: 'monospace' }}>{inferMs.toFixed(0)}ms</span>
+            )}
+          </div>
+          <button
+            onClick={() => setShowSidePanel(v => !v)}
             style={{
-              position: 'relative', background: '#0d1117',
-              borderRadius: 16, overflow: 'hidden',
-              flex: 1, minHeight: 300,
-              border: '1.5px solid var(--slate-200)',
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '5px 12px', borderRadius: 20, background: D.card, border: `1px solid ${D.border}`,
+              color: D.muted, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'monospace',
+              letterSpacing: '0.05em',
             }}
           >
-            {/* Demo video */}
-            {source === 'demo' && (
-              <video
-                ref={videoRef}
-                src="/video/dummy.mp4"
-                loop muted playsInline autoPlay
-                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-              />
-            )}
-
-            {/* ESP-Cam MJPEG */}
-            {source === 'espcam' && !imgError && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={streamUrl}
-                alt="ESP-Cam"
-                onError={() => setImgError(true)}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-              />
-            )}
-            {source === 'espcam' && imgError && (
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--slate-400)' }}>
-                <WifiOff size={36} strokeWidth={1.5} />
-                <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)' }}>Stream unavailable</span>
-                <button onClick={() => setImgError(false)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 8, border: '1.5px solid var(--slate-600)', background: 'transparent', color: 'var(--slate-300)', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
-                  <RefreshCw size={12} /> Retry
-                </button>
-              </div>
-            )}
-
-            {/* Real bounding boxes from YOLOv8 */}
-            {activeBoxes.map(d => (
-              <div
-                key={d.id}
-                style={{
-                  position: 'absolute',
-                  left:   `${d.bbox.x * 100}%`,
-                  top:    `${d.bbox.y * 100}%`,
-                  width:  `${d.bbox.w * 100}%`,
-                  height: `${d.bbox.h * 100}%`,
-                  border: `2px solid ${ANIMAL_COLORS[d.animal]}`,
-                  borderRadius: 3,
-                  pointerEvents: 'none',
-                  boxShadow: `0 0 8px ${ANIMAL_COLORS[d.animal]}55`,
-                  animation: 'fadeSlideIn 0.15s ease-out',
-                }}
-              >
-                <span style={{
-                  position: 'absolute', top: -20, left: 0,
-                  background: ANIMAL_COLORS[d.animal],
-                  color: '#fff', fontSize: 10, fontFamily: 'var(--font-mono)',
-                  fontWeight: 700, padding: '2px 6px', borderRadius: 4, whiteSpace: 'nowrap',
-                }}>
-                  {d.animal === 'cat' ? '🐈 ' : d.animal === 'dog' ? '🐕 ' : ''}
-                  {d.animal} {Math.round(d.confidence * 100)}%
-                </span>
-              </div>
-            ))}
-
-            {/* Offline fallback notice */}
-            {detectorOnline === false && source === 'demo' && (
-              <div style={{
-                position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)',
-                background: 'rgba(239,68,68,0.85)', backdropFilter: 'blur(4px)',
-                borderRadius: 8, padding: '5px 12px',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}>
-                <WifiOff size={11} color="#fff" />
-                <span style={{ fontSize: 11, color: '#fff', fontFamily: 'var(--font-mono)' }}>
-                  Detector offline — start the detector service
-                </span>
-              </div>
-            )}
-
-            {/* Counter badge */}
-            <div style={{
-              position: 'absolute', top: 10, right: 10,
-              background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)',
-              border: '1px solid rgba(255,255,255,0.12)',
-              borderRadius: 8, padding: '4px 10px',
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}>
-              <Wifi size={11} color="var(--orange-400)" />
-              <span style={{ fontSize: 11, color: '#fff', fontFamily: 'var(--font-mono)' }}>
-                {detections.length} detections
-              </span>
-            </div>
-
-            {/* Demo label */}
-            {source === 'demo' && (
-              <button
-                onClick={() => videoRef.current?.play()}
-                style={{
-                  position: 'absolute', bottom: 10, left: 10,
-                  display: 'flex', alignItems: 'center', gap: 5,
-                  background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  borderRadius: 7, padding: '4px 10px', cursor: 'pointer',
-                  color: 'rgba(255,255,255,0.7)', fontSize: 11, fontFamily: 'var(--font-mono)',
-                }}
-              >
-                <Play size={10} /> dummy.mp4
-              </button>
-            )}
-          </div>
-
-          {/* Source + conf bar */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#fff', border: '1.5px solid var(--slate-200)', borderRadius: 10 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--slate-600)', minWidth: 52 }}>Source</span>
-            <div style={{ display: 'flex', gap: 2, background: 'var(--slate-100)', borderRadius: 8, padding: 3 }}>
-              {(['demo', 'espcam'] as const).map(src => (
-                <button
-                  key={src}
-                  onClick={() => { setSource(src); setImgError(false); }}
-                  style={{
-                    padding: '4px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
-                    fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-sans)',
-                    background: source === src ? '#fff' : 'transparent',
-                    color: source === src ? 'var(--orange-600)' : 'var(--slate-500)',
-                    boxShadow: source === src ? '0 1px 2px rgba(15,23,42,0.06)' : 'none',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  {src === 'demo' ? 'Demo Video' : 'ESP-Cam'}
-                </button>
-              ))}
-            </div>
-            {source === 'espcam' && (
-              <input
-                type="text"
-                value={streamUrl}
-                onChange={e => setStreamUrl(e.target.value)}
-                placeholder="http://192.168.x.x/stream"
-                style={{ flex: 1, fontSize: 12, fontFamily: 'var(--font-mono)', border: '1.5px solid var(--slate-200)', borderRadius: 8, padding: '5px 10px', outline: 'none', color: 'var(--slate-700)', background: 'var(--slate-50)' }}
-              />
-            )}
-            <span style={{ fontSize: 11, color: 'var(--slate-400)', marginLeft: 'auto', flexShrink: 0 }}>
-              conf&nbsp;
-              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--orange-600)' }}>
-                {Math.round(conf * 100)}%
-              </span>
-            </span>
-            <input
-              type="range"
-              min={0.1} max={0.9} step={0.05}
-              value={conf}
-              onChange={e => setConf(parseFloat(e.target.value))}
-              style={{ width: 80 }}
-            />
-          </div>
-        </div>
-
-        {/* ── Detection feed ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', background: '#fff', border: '1.5px solid var(--slate-200)', borderRadius: 16, overflow: 'hidden' }}>
-          {/* Header */}
-          <div style={{ padding: '12px 14px', borderBottom: '1.5px solid var(--slate-100)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <div>
-              <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--slate-800)' }}>Detection Feed</p>
-              <p style={{ fontSize: 11, color: 'var(--slate-400)', marginTop: 2 }}>Real YOLOv8 results</p>
-            </div>
-            <button
-              onClick={() => { setDetections([]); setActiveBoxes([]); }}
-              title="Clear"
-              style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'var(--slate-100)', color: 'var(--slate-500)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
-
-          {/* Counters */}
-          <div style={{ display: 'flex', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--slate-100)', flexShrink: 0 }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 20, background: 'var(--orange-50)', color: 'var(--orange-600)', fontSize: 12, fontWeight: 600 }}>
-              <Cat size={12} /> {catCount}
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 20, background: '#eff6ff', color: '#2563eb', fontSize: 12, fontWeight: 600 }}>
-              <Dog size={12} /> {dogCount}
-            </span>
-          </div>
-
-          {/* Events */}
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {detections.length === 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, color: 'var(--slate-300)', padding: 24 }}>
-                <ScanLine size={32} strokeWidth={1.2} />
-                <p style={{ fontSize: 13, color: 'var(--slate-400)', textAlign: 'center' }}>
-                  {detectorOnline === false
-                    ? 'Start the detector service to see real detections'
-                    : 'Waiting for detections…'}
-                </p>
-              </div>
-            ) : (
-              detections.slice(0, 80).map(d => <EventRow key={d.id} d={d} />)
-            )}
-          </div>
+            <ChevronDown size={12} style={{ transform: showSidePanel ? 'rotate(-90deg)' : 'rotate(90deg)', transition: 'transform 0.2s' }} />
+            {showSidePanel ? 'HIDE' : 'CONFIG'}
+          </button>
         </div>
       </div>
 
-      {/* Hidden canvas for frame capture */}
-      <canvas ref={captureCanvas} style={{ display: 'none' }} />
+      {/* ── Main + collapsible side panel ── */}
+      <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
+
+        {/* ──── Left column ──── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
+
+          {/* Video */}
+          <Card style={{ flexShrink: 0 }}>
+            {/*
+              Keep aspect ratio AND cap height at 42dvh without cropping.
+              When height would exceed 42dvh, shrink width so the box stays
+              proportional: width = min(100%, 42dvh × aspect).
+              The black centering bar fills any leftover horizontal space.
+            */}
+            <div style={{ width: '100%', background: '#000', display: 'flex', justifyContent: 'center' }}>
+            <div style={{
+              position: 'relative',
+              width: `min(100%, calc(42dvh * ${videoAspect ?? (16/9)}))`,
+              aspectRatio: videoAspect ? String(videoAspect) : '16/9',
+              background: '#000',
+            }}>
+              {source === 'demo' && (
+                <video
+                  ref={videoRef}
+                  src="/video/dummy.mp4"
+                  /* no loop — detect one full pass then enter review mode */
+                  muted playsInline
+                  onTimeUpdate={() => {
+                    if (!isSeekingRef.current) {
+                      const v = videoRef.current;
+                      if (v) setVideoTime(v.currentTime);
+                    }
+                  }}
+                  onLoadedMetadata={() => {
+                    const v = videoRef.current;
+                    if (v) {
+                      setVideoAspect(v.videoWidth / v.videoHeight);
+                      setVideoDuration(v.duration);
+                    }
+                  }}
+                  onEnded={handleVideoEnd}
+                  onPlay={() => setPaused(false)}
+                  onPause={() => setPaused(true)}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                />
+              )}
+              {source === 'espcam' && !imgError && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={streamUrl} alt="ESP-Cam" onError={() => setImgError(true)}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+              )}
+              {source === 'espcam' && imgError && (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: D.muted }}>
+                  <WifiOff size={28} strokeWidth={1.5} />
+                  <span style={{ fontSize: 12, fontFamily: 'monospace' }}>Stream unavailable</span>
+                  <button onClick={() => setImgError(false)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 8, border: `1px solid ${D.border}`, background: 'transparent', color: D.muted, fontSize: 11, cursor: 'pointer' }}>
+                    <RefreshCw size={10} /> Retry
+                  </button>
+                </div>
+              )}
+
+              {/* Seg mask overlay — always in DOM, visible when mask data present */}
+              <svg viewBox="0 0 1 1" preserveAspectRatio="none"
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+                {displayBoxes.map(d => {
+                  if (!d.mask || d.mask.length < 3) return null;
+                  const color = tColor(d.track_id);
+                  return (
+                    <polygon key={d.id + '-m'}
+                      points={d.mask.map(([x, y]) => `${x},${y}`).join(' ')}
+                      fill={`${color}38`} stroke={color} strokeWidth={0.003} />
+                  );
+                })}
+              </svg>
+
+              {/* Bounding boxes */}
+              {displayBoxes.map(d => {
+                const color = tColor(d.track_id);
+                return (
+                  <div key={d.id} style={{
+                    position: 'absolute',
+                    left: `${d.bbox.x * 100}%`, top: `${d.bbox.y * 100}%`,
+                    width: `${d.bbox.w * 100}%`, height: `${d.bbox.h * 100}%`,
+                    border: `2px solid ${color}`, borderRadius: 4,
+                    boxShadow: `0 0 8px ${color}44`, pointerEvents: 'none',
+                    animation: 'fadeSlideIn 0.12s ease-out',
+                  }}>
+                    <div style={{
+                      position: 'absolute', top: -22, left: -1,
+                      background: color, color: '#fff',
+                      fontSize: 10, fontFamily: 'monospace', fontWeight: 700,
+                      padding: '2px 6px', borderRadius: '4px 4px 4px 0',
+                      display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
+                    }}>
+                      <Cat size={9} />
+                      {d.track_id != null ? `#${d.track_id}` : '?'}
+                      <span style={{ opacity: 0.8 }}>{Math.round(d.confidence * 100)}%</span>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Offline overlay */}
+              {detectorOnline === false && (
+                <div style={{
+                  position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)',
+                  background: 'rgba(239,68,68,0.85)', backdropFilter: 'blur(4px)',
+                  borderRadius: 8, padding: '5px 14px',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                  <WifiOff size={11} color="#fff" />
+                  <span style={{ fontSize: 11, color: '#fff', fontFamily: 'monospace' }}>Detector offline</span>
+                </div>
+              )}
+
+              {/* Source toggle */}
+              <div style={{
+                position: 'absolute', bottom: 10, left: 10,
+                display: 'flex', gap: 2,
+                background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)',
+                borderRadius: 8, padding: 3, border: `1px solid ${D.border}`,
+              }}>
+                {(['demo', 'espcam'] as const).map(src => (
+                  <button key={src} onClick={() => { setSource(src); setImgError(false); }} style={{
+                    padding: '3px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                    fontSize: 11, fontWeight: 600, fontFamily: 'monospace',
+                    background: source === src ? D.orange : 'transparent',
+                    color: source === src ? '#fff' : D.muted,
+                  }}>
+                    {src === 'demo' ? 'Demo' : 'ESP-Cam'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Scan progress / live count badge */}
+              <div style={{
+                position: 'absolute', top: 10, right: 10,
+                background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
+                border: `1px solid ${D.border}`, borderRadius: 8,
+                padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+                {scanDone ? (
+                  <>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: D.green, flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, color: D.green, fontFamily: 'monospace', fontWeight: 700 }}>
+                      {SCAN_PASSES} passes · {displayBoxes.length} cat{displayBoxes.length !== 1 ? 's' : ''} @ {fmtVT(videoTime)}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{
+                      width: 6, height: 6, borderRadius: '50%', background: D.orange, flexShrink: 0,
+                      animation: 'stray-pulse 0.8s infinite',
+                    }} />
+                    <span style={{ fontSize: 10, color: D.orange, fontFamily: 'monospace', fontWeight: 700 }}>
+                      {passCount < SCAN_PASSES
+                        ? `Pass ${passCount + 1} of ${SCAN_PASSES} · ${displayBoxes.length} live`
+                        : 'Finalizing…'}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {/* ESP-Cam URL input */}
+              {source === 'espcam' && (
+                <div style={{ position: 'absolute', top: 10, left: 10, right: 10 }}>
+                  <input type="text" value={streamUrl} onChange={e => setStreamUrl(e.target.value)}
+                    placeholder="http://192.168.x.x/stream"
+                    style={{
+                      width: '100%', boxSizing: 'border-box',
+                      background: 'rgba(0,0,0,0.65)', border: `1px solid ${D.border}`,
+                      borderRadius: 7, padding: '5px 10px',
+                      color: D.text, fontSize: 11, fontFamily: 'monospace', outline: 'none',
+                    }} />
+                </div>
+              )}
+            </div>
+            </div>{/* end centering wrapper */}
+
+            {source === 'demo' && (
+              <Scrubber
+                currentTime={videoTime} duration={videoDuration}
+                onSeekStart={handleSeekStart}
+                onSeek={handleSeek}
+                onSeekEnd={handleSeekEnd}
+                paused={paused} onTogglePlay={handleTogglePlay}
+                scanDone={scanDone} onReplay={handleReplay}
+              />
+            )}
+          </Card>
+          <canvas ref={captureCanvas} style={{ display: 'none' }} />
+
+          {/* Presence Timeline */}
+          <Card style={{ flexShrink: 0 }}>
+            <CardHeader
+              title="Presence Timeline"
+              icon={<Clock size={13} color={D.orange} />}
+              badge={
+                uniqueCats > 0
+                  ? <Pill color={D.orange}>{uniqueCats} cat{uniqueCats !== 1 ? 's' : ''} · {totalVisits} visits</Pill>
+                  : undefined
+              }
+              action={
+                catStats.length > 0
+                  ? <button onClick={() => { setCatLogs(new Map()); setDetectionHistory([]); setScanDone(false); lastCapturedTimeRef.current = -1; }} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, border: `1px solid ${D.border}`, background: 'transparent', color: D.muted, fontSize: 10, cursor: 'pointer' }}>
+                      <Trash2 size={10} /> Clear
+                    </button>
+                  : undefined
+              }
+            />
+            <div style={{ padding: '10px 14px 6px' }}>
+              <PresenceTimeline stats={catStats} duration={videoDuration || 1} cursor={videoTime} />
+            </div>
+          </Card>
+
+          {/* Cat Presence — scrollable */}
+          <Card style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <CardHeader
+              title="Cat Presence"
+              icon={<BarChart2 size={13} color={D.orange} />}
+              badge={<span style={{ fontSize: 10, color: D.muted, fontFamily: 'monospace' }}>{catStats.reduce((s, c) => s + c.sightings.length, 0)} frames</span>}
+            />
+            <div style={{ ...scrollStyle, flex: 1, minHeight: 0 }}>
+              {catStats.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '24px 0', color: D.muted }}>
+                  <ScanLine size={22} strokeWidth={1.3} />
+                  <span style={{ fontSize: 11, fontFamily: 'monospace' }}>
+                    {detectorOnline === false ? 'Start the detector service' : 'Play video to scan for cats'}
+                  </span>
+                </div>
+              ) : catStats.map(cat => (
+                <div key={cat.trackId} style={{
+                  display: 'grid', gridTemplateColumns: '48px 1fr 58px 46px',
+                  alignItems: 'center', gap: 10, padding: '8px 14px',
+                  borderBottom: `1px solid ${D.border}18`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Cat size={12} color={cat.color} />
+                    <span style={{ fontSize: 12, fontWeight: 800, fontFamily: 'monospace', color: cat.color }}>
+                      #{cat.trackId}
+                    </span>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: D.text, fontFamily: 'monospace' }}>
+                      {cat.visitCount} visit{cat.visitCount !== 1 ? 's' : ''}
+                    </div>
+                    <div style={{ fontSize: 10, color: D.muted, marginTop: 1 }}>last @ {fmtVT(cat.lastSeen)}</div>
+                    <div style={{ height: 2, background: D.border, borderRadius: 1, marginTop: 4, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${Math.round(cat.avgConf * 100)}%`, background: cat.color, borderRadius: 1 }} />
+                    </div>
+                  </div>
+                  <Sparkline data={cat.sightings.map(s => s.conf)} color={cat.color} />
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'monospace', color: D.text }}>
+                      {Math.round(cat.avgConf * 100)}%
+                    </div>
+                    <div style={{ fontSize: 9, color: D.muted }}>avg conf</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+
+        {/* ──── Right side panel (collapsible) ──── */}
+        <div style={{
+          width: showSidePanel ? 286 : 0,
+          overflow: 'hidden',
+          transition: 'width 0.25s ease',
+          flexShrink: 0,
+        }}>
+        <div style={{ width: 286, display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
+
+          {/* Config — overflow visible so the model dropdown can extend beyond the card */}
+          <Card style={{ flexShrink: 0, padding: '14px 16px', overflow: 'visible' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: D.muted, fontFamily: 'monospace', letterSpacing: '0.1em', marginBottom: 12 }}>
+              DETECTOR CONFIG
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, color: D.muted, fontFamily: 'monospace', marginBottom: 5 }}>Model</div>
+              <ModelPicker current={currentModel} models={availableModels} switching={switching} onSelect={switchModel} />
+            </div>
+            {isSeg && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '5px 9px', borderRadius: 7, marginBottom: 12,
+                background: `${D.purple}14`, border: `1px solid ${D.purple}30`,
+              }}>
+                <Layers size={10} color={D.purple} />
+                <span style={{ fontSize: 10, color: D.purple, fontFamily: 'monospace', fontWeight: 600 }}>
+                  Body mask segmentation active
+                </span>
+              </div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <DarkSlider label="Conf" value={conf} min={0.05} max={0.9} step={0.05}
+                onChange={setConf} fmt={v => `${Math.round(v * 100)}%`} />
+              <DarkSlider label="IOU" value={iou} min={0.1} max={0.9} step={0.05}
+                onChange={setIou} fmt={v => `${Math.round(v * 100)}%`} />
+              <Segmented<number>
+                label="Res"
+                value={imgsz}
+                options={[
+                  { value: 640,  label: '640',  sub: 'fast' },
+                  { value: 960,  label: '960',  sub: 'balanced' },
+                  { value: 1280, label: '1280', sub: 'best' },
+                ]}
+                onChange={setImgsz}
+              />
+              <Toggle
+                label="Augment"
+                sub="multi-scale · ~3× slower, better recall"
+                value={augment}
+                onChange={setAugment}
+              />
+              {inferMs != null && (
+                <div style={{
+                  fontSize: 9, color: D.muted, fontFamily: 'monospace',
+                  textAlign: 'right', marginTop: -2,
+                }}>
+                  last inference {inferMs.toFixed(0)}ms · higher res &amp; augment improve small-cat detection
+                </div>
+              )}
+            </div>
+            {!scanDone && (
+              <div style={{
+                marginTop: 10, fontSize: 9, color: D.orange, fontFamily: 'monospace',
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}>
+                <ScanLine size={10} />
+                Changes apply on the next captured frame
+              </div>
+            )}
+          </Card>
+
+          {/* Cat Sightings — scrollable event feed */}
+          <Card style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <CardHeader
+              title="Cat Sightings"
+              icon={<Cat size={13} color={D.orange} />}
+              badge={
+                <span style={{ fontSize: 18, fontWeight: 800, color: D.text, fontFamily: 'monospace', lineHeight: 1 }}>
+                  {uniqueCats}
+                </span>
+              }
+            />
+            <div style={{ ...scrollStyle, flex: 1, minHeight: 0 }}>
+              {detectionHistory.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, height: '100%', color: D.muted, padding: 20 }}>
+                  <ScanLine size={22} strokeWidth={1.3} />
+                  <span style={{ fontSize: 11, fontFamily: 'monospace', textAlign: 'center' }}>
+                    {detectorOnline === false ? 'Start the detector' : 'Detections will appear here'}
+                  </span>
+                </div>
+              ) : [...detectionHistory].reverse().map(evt => {
+                const color = tColor(evt.track_id);
+                return (
+                  <div key={evt.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 9,
+                    padding: '7px 14px', borderBottom: `1px solid ${D.border}18`,
+                    borderLeft: `3px solid ${color}`,
+                    background: `${color}06`,
+                  }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+                      background: `${color}18`, border: `1.5px solid ${color}38`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Cat size={13} color={color} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'monospace', color }}>
+                          {evt.track_id != null ? `Cat #${evt.track_id}` : 'Cat ?'}
+                        </span>
+                        <span style={{ fontSize: 11, fontFamily: 'monospace', fontWeight: 700, color }}>
+                          {Math.round(evt.confidence * 100)}%
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 10, color: D.muted, fontFamily: 'monospace', marginTop: 2, display: 'flex', gap: 8 }}>
+                        <span>{fmtVT(evt.videoTime)}</span>
+                        {evt.mask && (
+                          <span style={{ color: D.purple, display: 'flex', alignItems: 'center', gap: 3 }}>
+                            <Layers size={9} />{evt.mask.length}pts
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+        </div>{/* end side panel inner */}
+      </div>
     </div>
   );
 }

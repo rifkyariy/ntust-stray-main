@@ -24,8 +24,8 @@ interface Props {
 export default function StationsMapInner({ stations, onSelect }: Props) {
   return (
     <MapContainer
-      center={[23.8, 121.0]}
-      zoom={7}
+      center={[25.05, 121.55]}
+      zoom={12}
       style={{ width: '100%', height: '100%' }}
       scrollWheelZoom={false}
       zoomControl={false}

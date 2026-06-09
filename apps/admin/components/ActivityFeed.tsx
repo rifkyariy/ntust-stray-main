@@ -1,22 +1,43 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { WSMessage } from '@stray/ui';
 import { Zap, Eye, AlertTriangle, PawPrint } from '@stray/ui';
 
+type IconKind = 'feed' | 'detect' | 'alert' | 'status';
+
 interface FeedItem {
   id: string;
-  icon: 'feed' | 'detect' | 'alert' | 'status';
+  icon: IconKind;
   text: string;
   station?: string;
   ts: Date;
 }
 
-function itemIcon(kind: FeedItem['icon']) {
+type FilterKey = 'all' | IconKind;
+
+const FILTERS: { key: FilterKey; label: string }[] = [
+  { key: 'all',    label: 'All' },
+  { key: 'feed',   label: 'Feed' },
+  { key: 'detect', label: 'Detect' },
+  { key: 'alert',  label: 'Alert' },
+  { key: 'status', label: 'Status' },
+];
+
+function itemIcon(kind: IconKind) {
   switch (kind) {
     case 'feed':    return <Zap size={13} color="var(--orange-500)" strokeWidth={2.5} />;
     case 'detect':  return <Eye size={13} color="#3b82f6" strokeWidth={2} />;
     case 'alert':   return <AlertTriangle size={13} color="#ef4444" strokeWidth={2} />;
     case 'status':  return <PawPrint size={13} color="#4ade80" strokeWidth={2} />;
+  }
+}
+
+function itemBg(kind: IconKind) {
+  switch (kind) {
+    case 'feed':   return 'var(--orange-50)';
+    case 'detect': return '#eff6ff';
+    case 'alert':  return '#fef2f2';
+    case 'status': return '#f0fdf4';
   }
 }
 
@@ -27,54 +48,63 @@ function timeAgo(ts: Date) {
   return `${Math.floor(diff / 3600)}h ago`;
 }
 
+
 interface ActivityFeedProps {
   latestMsg?: WSMessage | null;
 }
 
-// Offsets in ms — used to generate the seed feed AFTER mount so server/client timestamps match
-const SEED_OFFSETS: Array<{ icon: FeedItem['icon']; text: string; station: string; offset: number }> = [
-  { icon: 'feed',   text: '120g dispensed',       station: "Da'an Park Station", offset: 80_000 },
-  { icon: 'detect', text: 'Cat detected (0.94)',  station: 'Gongguan Station',    offset: 150_000 },
-  { icon: 'status', text: 'Station online',       station: 'Zhongshan Station',   offset: 320_000 },
-  { icon: 'alert',  text: 'Food level low (18%)', station: 'Yonghe Station',      offset: 600_000 },
-  { icon: 'feed',   text: '80g dispensed',        station: 'Xinyi Station',       offset: 900_000 },
-];
-
 export default function ActivityFeed({ latestMsg }: ActivityFeedProps) {
-  // Start empty on the server — seed is populated in useEffect (client-only)
-  // so the initial SSR HTML matches the client's initial render.
   const [items, setItems] = useState<FeedItem[]>([]);
   const [mounted, setMounted] = useState(false);
+  const [filter, setFilter] = useState<FilterKey>('all');
 
-  // Populate seed data after hydration
+  // Track first-seen stations and last food-alert level per station
+  const seenStations   = useRef<Set<string>>(new Set());
+  const lastFoodAlert  = useRef<Map<string, number>>(new Map());
+
   useEffect(() => {
-    const now = Date.now();
-    setItems(
-      SEED_OFFSETS.map((s, i) => ({
-        id: String(i + 1),
-        icon: s.icon,
-        text: s.text,
-        station: s.station,
-        ts: new Date(now - s.offset),
-      })),
-    );
     setMounted(true);
   }, []);
 
-  // Prepend new WS events
   useEffect(() => {
     if (!latestMsg || !mounted) return;
+
     let item: FeedItem | null = null;
-    const ts = new Date();
+    const ts  = new Date();
+    const sid = latestMsg.station_id;
+
     if (latestMsg.type === 'feed_event') {
-      item = { id: `${ts.getTime()}`, icon: 'feed',   text: `${latestMsg.grams}g dispensed`,                    station: latestMsg.station_id, ts };
+      item = { id: `${ts.getTime()}`, icon: 'feed',   text: `${latestMsg.grams}g dispensed`,                    station: sid, ts };
     } else if (latestMsg.type === 'detection') {
-      item = { id: `${ts.getTime()}`, icon: 'detect', text: `Cat detected (${latestMsg.confidence.toFixed(2)})`, station: latestMsg.station_id, ts };
+      item = { id: `${ts.getTime()}`, icon: 'detect', text: `Cat detected (${latestMsg.confidence.toFixed(2)})`, station: sid, ts };
     } else if (latestMsg.type === 'alert') {
-      item = { id: `${ts.getTime()}`, icon: 'alert',  text: latestMsg.message,                                   station: latestMsg.station_id, ts };
+      item = { id: `${ts.getTime()}`, icon: 'alert',  text: latestMsg.message,                                   station: sid, ts };
+    } else if (latestMsg.type === 'station_status') {
+      item = { id: `${ts.getTime()}`, icon: 'alert',  text: `Station went ${latestMsg.status}`,                  station: sid, ts };
+    } else if (latestMsg.type === 'telemetry') {
+      const food = latestMsg.food_pct;
+
+      if (!seenStations.current.has(sid)) {
+        // First telemetry from this station → station came online
+        seenStations.current.add(sid);
+        item = { id: `${ts.getTime()}`, icon: 'status', text: 'Station online', station: sid, ts };
+      } else if (food < 20) {
+        const prev = lastFoodAlert.current.get(sid) ?? 100;
+        // Alert when crossing the threshold or dropping 5+ percentage points
+        if (prev >= 20 || food <= prev - 5) {
+          lastFoodAlert.current.set(sid, food);
+          item = { id: `${ts.getTime()}`, icon: 'alert', text: `Food level low (${food}%)`, station: sid, ts };
+        }
+      } else {
+        // Food recovered above 20% — reset alert tracking
+        if (lastFoodAlert.current.has(sid)) lastFoodAlert.current.delete(sid);
+      }
     }
+
     if (item) setItems((prev) => [item!, ...prev].slice(0, 50));
   }, [latestMsg, mounted]);
+
+  const visible = filter === 'all' ? items : items.filter((i) => i.icon === filter);
 
   return (
     <div style={{
@@ -86,33 +116,79 @@ export default function ActivityFeed({ latestMsg }: ActivityFeedProps) {
       display: 'flex',
       flexDirection: 'column',
     }}>
+      {/* Header */}
       <div style={{
-        padding: '16px 18px',
+        padding: '14px 18px 0',
         borderBottom: '1px solid var(--slate-100)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
       }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--slate-900)' }}>Live Activity</span>
-        <span style={{ fontSize: 11, fontWeight: 600, color: '#4ade80', background: '#f0fdf4', borderRadius: 20, padding: '2px 8px' }}>
-          ● LIVE
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--slate-900)' }}>Live Activity</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#4ade80', background: '#f0fdf4', borderRadius: 20, padding: '2px 8px' }}>
+            ● LIVE
+          </span>
+        </div>
+
+        {/* Filter pills */}
+        <div style={{ display: 'flex', gap: 6, paddingBottom: 12, flexWrap: 'wrap' }}>
+          {FILTERS.map(({ key, label }) => {
+            const active = filter === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                style={{
+                  padding: '4px 12px',
+                  borderRadius: 999,
+                  border: '1.5px solid',
+                  borderColor: active ? (
+                    key === 'feed'   ? 'var(--orange-500)' :
+                    key === 'detect' ? '#3b82f6' :
+                    key === 'alert'  ? '#ef4444' :
+                    key === 'status' ? '#4ade80' :
+                    'var(--slate-700)'
+                  ) : 'var(--slate-200)',
+                  background: active ? (
+                    key === 'feed'   ? 'var(--orange-50)' :
+                    key === 'detect' ? '#eff6ff' :
+                    key === 'alert'  ? '#fef2f2' :
+                    key === 'status' ? '#f0fdf4' :
+                    'var(--slate-900)'
+                  ) : '#f8fafc',
+                  color: active ? (
+                    key === 'feed'   ? 'var(--orange-600)' :
+                    key === 'detect' ? '#1d4ed8' :
+                    key === 'alert'  ? '#dc2626' :
+                    key === 'status' ? '#16a34a' :
+                    '#fff'
+                  ) : 'var(--slate-500)',
+                  fontSize: 11, fontWeight: 700,
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-sans)',
+                  transition: 'all 0.12s',
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-        {items.length === 0 && (
+      {/* Feed */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
+        {visible.length === 0 && (
           <div style={{ padding: '24px 18px', fontSize: 12, color: 'var(--slate-400)', textAlign: 'center' }}>
-            Waiting for events…
+            {filter === 'all' ? 'Waiting for events…' : `No ${filter} events yet`}
           </div>
         )}
-        {items.map((item) => (
+        {visible.map((item) => (
           <div
             key={item.id}
             style={{
               display: 'flex',
               alignItems: 'flex-start',
               gap: 10,
-              padding: '10px 18px',
+              padding: '9px 18px',
               borderBottom: '1px solid var(--slate-50)',
               animation: 'fadeSlideIn 0.25s ease',
             }}
@@ -120,7 +196,7 @@ export default function ActivityFeed({ latestMsg }: ActivityFeedProps) {
             <div style={{
               width: 26, height: 26,
               borderRadius: 8,
-              background: 'var(--slate-50)',
+              background: itemBg(item.icon),
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               flexShrink: 0,
               marginTop: 1,
@@ -135,7 +211,6 @@ export default function ActivityFeed({ latestMsg }: ActivityFeedProps) {
                 </div>
               )}
             </div>
-            {/* suppressHydrationWarning because timeAgo() is time-dependent */}
             <span suppressHydrationWarning style={{ fontSize: 11, color: 'var(--slate-400)', flexShrink: 0 }}>
               {timeAgo(item.ts)}
             </span>

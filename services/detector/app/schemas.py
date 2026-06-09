@@ -9,13 +9,16 @@ class BBox(BaseModel):
 
 
 class DetectionItem(BaseModel):
-    animal: str       # "cat" | "dog" | "other"
+    animal: str
     confidence: float
     bbox: BBox
     class_id: int
-    class_name: str   # raw COCO class label
+    class_name: str
+    track_id: int | None = None
+    mask: list[list[float]] | None = None  # [[x,y], ...] normalised 0-1, seg models only
 
 
 class DetectionResponse(BaseModel):
     detections: list[DetectionItem]
     inference_ms: float
+    is_segmentation: bool = False

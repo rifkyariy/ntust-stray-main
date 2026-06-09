@@ -25,7 +25,20 @@ export interface Donation {
   amount_ntd: number;
   donor_name: string | null;
   dispensed: boolean;
+  grams: number | null;
   created_at: string;
+}
+
+export interface PaymentSession {
+  id: string;
+  short_id: string;
+  station_id: string;
+  donor_name: string | null;
+  amount_ntd: number;
+  grams: number;
+  status: 'pending' | 'paid' | 'expired';
+  created_at: string;
+  paid_at: string | null;
 }
 
 export interface Schedule {
@@ -74,4 +87,11 @@ export interface WSAlert {
   ts: string;
 }
 
-export type WSMessage = WSTelemetry | WSDetection | WSFeedEvent | WSAlert;
+export interface WSStationStatus {
+  type: 'station_status';
+  station_id: string;
+  status: StationStatus;
+  ts: string;
+}
+
+export type WSMessage = WSTelemetry | WSDetection | WSFeedEvent | WSAlert | WSStationStatus;

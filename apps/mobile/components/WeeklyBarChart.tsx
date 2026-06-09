@@ -1,4 +1,5 @@
 'use client';
+import { useState, useEffect } from 'react';
 
 // 7-day feeding frequency bar chart.
 // Shows the last 7 days with real dates; today highlighted in orange.
@@ -10,21 +11,25 @@ export interface DayBar {
   count: number;
 }
 
+const TZ = 'Asia/Taipei';
+
+function twDateStr(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d);
+}
+
+function twDayAbbrev(d: Date): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short' }).format(d);
+}
+
 function buildLastSevenDays(data?: Record<string, number>): DayBar[] {
-  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const result: DayBar[] = [];
   for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    // Derive a plausible seed-based count when no real data provided
-    const seed = d.getDate() * 7 + d.getMonth() * 31;
+    const d = new Date(Date.now() - i * 86400000);
+    const dateStr = twDateStr(d);
+    const day = twDayAbbrev(d);
+    const seed = parseInt(dateStr.slice(8)) * 7 + parseInt(dateStr.slice(5, 7)) * 31;
     const defaultCount = ((seed * 13 + 7) % 11) + 1;
-    result.push({
-      dateStr,
-      day: DAY_NAMES[d.getDay()],
-      count: data?.[dateStr] ?? defaultCount,
-    });
+    result.push({ dateStr, day, count: data?.[dateStr] ?? defaultCount });
   }
   return result;
 }
@@ -36,21 +41,47 @@ interface WeeklyBarChartProps {
 }
 
 export function WeeklyBarChart({ data, onDayClick }: WeeklyBarChartProps) {
-  const bars = buildLastSevenDays(data);
+  // Keep bars/todayStr undefined until after mount so server HTML and first
+  // client render match, avoiding the "Mon" vs "Tue" hydration mismatch.
+  const [bars, setBars]       = useState<DayBar[]>([]);
+  const [todayStr, setTodayStr] = useState('');
+
+  useEffect(() => {
+    setBars(buildLastSevenDays(data));
+    setTodayStr(twDateStr(new Date()));
+  }, [data]);
+
   const max = Math.max(...bars.map((d) => d.count), 1);
-  const todayStr = (() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  })();
+
+  const cardStyle: React.CSSProperties = {
+    background: '#fff',
+    borderRadius: 20,
+    padding: '18px 18px 14px',
+    border: '1px solid #f1f5f9',
+    marginBottom: 12,
+  };
+
+  // Skeleton while waiting for client-side date calculation
+  if (bars.length === 0) {
+    return (
+      <div style={cardStyle}>
+        <div style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 13, color: '#1e293b', marginBottom: 16 }}>
+          Weekly activity
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 80 }}>
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <div style={{ width: '100%', height: 32, borderRadius: 5, background: '#f1f5f9' }} />
+              <div style={{ width: 20, height: 8, borderRadius: 4, background: '#f1f5f9' }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{
-      background: '#fff',
-      borderRadius: 20,
-      padding: '18px 18px 14px',
-      border: '1px solid #f1f5f9',
-      marginBottom: 12,
-    }}>
+    <div style={cardStyle}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         marginBottom: 16,

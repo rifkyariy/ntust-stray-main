@@ -1,8 +1,15 @@
 'use client';
+import { useState, useEffect } from 'react';
 
 // Monthly activity heatmap calendar.
 // Each day cell is coloured by feeding count: 0=slate, 1-2=light orange, 3-5=orange, 6+=deep orange.
 // Tapping a day fires onDayClick(dateStr).
+
+const TZ = 'Asia/Taipei';
+
+function twDateStr(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d);
+}
 
 function heatColor(count: number): string {
   if (count === 0) return '#f1f5f9';
@@ -22,14 +29,23 @@ interface MonthlyHeatmapProps {
 const DOW_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 export function MonthlyHeatmap({
-  year = new Date().getFullYear(),
-  month = new Date().getMonth(),
+  year,
+  month,
   data = {},
   onDayClick,
 }: MonthlyHeatmapProps) {
-  const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const today = new Date();
+  // Compute today in Taiwan timezone only on the client to avoid SSR mismatch
+  const [todayTW, setTodayTW] = useState('');
+  useEffect(() => {
+    setTodayTW(twDateStr());
+  }, []);
+
+  // Derive year/month from Taiwan today once available, or fall back to UTC for SSR skeleton
+  const resolvedYear  = year  ?? (todayTW ? parseInt(todayTW.slice(0, 4))  : new Date().getFullYear());
+  const resolvedMonth = month ?? (todayTW ? parseInt(todayTW.slice(5, 7)) - 1 : new Date().getMonth());
+
+  const firstDay   = new Date(resolvedYear, resolvedMonth, 1).getDay();
+  const daysInMonth = new Date(resolvedYear, resolvedMonth + 1, 0).getDate();
 
   const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -49,7 +65,7 @@ export function MonthlyHeatmap({
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 13, color: '#1e293b' }}>
-          {MONTH_NAMES[month]} {year}
+          {MONTH_NAMES[resolvedMonth]} {resolvedYear}
         </div>
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
           {[0, 2, 5, 7].map((n) => (
@@ -75,16 +91,11 @@ export function MonthlyHeatmap({
         {cells.map(({ day }, idx) => {
           if (!day) return <div key={`blank-${idx}`} />;
 
-          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const dateStr = `${resolvedYear}-${String(resolvedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
           const count = data[dateStr] ?? 0;
-          const isToday =
-            today.getFullYear() === year &&
-            today.getMonth() === month &&
-            today.getDate() === day;
-
-          // Future days are not interactive
-          const cellDate = new Date(year, month, day);
-          const isFuture = cellDate > today;
+          // Compare date strings — only correct after todayTW is set on client
+          const isToday  = !!todayTW && dateStr === todayTW;
+          const isFuture = !!todayTW && dateStr > todayTW;
 
           return (
             <div

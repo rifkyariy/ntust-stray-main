@@ -54,6 +54,7 @@ class DonationCreate(BaseModel):
     amount_ntd: float
     donor_name: str | None = None
     dispense: bool = False
+    grams: int | None = None
 
 
 class DonationOut(BaseModel):
@@ -62,7 +63,31 @@ class DonationOut(BaseModel):
     amount_ntd: float
     donor_name: str | None
     dispensed: bool
+    grams: int | None
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Payment session ───────────────────────────────────────────────────────────
+
+class PaymentSessionCreate(BaseModel):
+    station_id: uuid.UUID
+    amount_ntd: float
+    grams: int
+    donor_name: str | None = None
+
+
+class PaymentSessionOut(BaseModel):
+    id: uuid.UUID
+    short_id: str
+    station_id: uuid.UUID
+    donor_name: str | None
+    amount_ntd: float
+    grams: int
+    status: str
+    created_at: datetime
+    paid_at: datetime | None
 
     model_config = {"from_attributes": True}
 
@@ -71,6 +96,13 @@ class DonationOut(BaseModel):
 
 class ScheduleCreate(BaseModel):
     station_id: uuid.UUID
+    cron_expr: str
+    grams: int
+    active: bool = True
+
+
+# Body schema for POST /stations/{id}/schedule — station_id comes from URL path
+class ScheduleBody(BaseModel):
     cron_expr: str
     grams: int
     active: bool = True

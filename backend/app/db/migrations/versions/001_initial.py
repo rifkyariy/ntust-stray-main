@@ -15,8 +15,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE TYPE stationstatus AS ENUM ('online', 'low_food', 'offline')")
-
     op.create_table(
         'stations',
         sa.Column('id', UUID(as_uuid=True), primary_key=True),
@@ -81,4 +79,3 @@ def downgrade() -> None:
     op.drop_table('schedules')
     op.drop_table('donations')
     op.drop_table('stations')
-    op.execute('DROP TYPE stationstatus')

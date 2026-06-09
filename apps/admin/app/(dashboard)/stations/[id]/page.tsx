@@ -8,5 +8,6 @@ export default async function StationDetailPage({ params }: { params: { id: stri
   const token = (await getAuthToken()) ?? '';
   const station = (await fetchStation(params.id)) ?? findSeed(params.id);
   if (!station) notFound();
-  return <StationDetailClient station={station} token={token} />;
+  // Same-origin proxy path — Next rewrites /detector/* to the detector service.
+  return <StationDetailClient station={station} token={token} detectorUrl="/detector" />;
 }

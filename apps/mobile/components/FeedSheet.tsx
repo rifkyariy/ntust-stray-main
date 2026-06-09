@@ -1,18 +1,46 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, Check, Zap } from '@stray/ui';
 import { PawPrint } from '@stray/ui';
-import { postDonation } from '../lib/api';
-import type { Station } from '@stray/ui';
+import { createPaymentSession, confirmPayment, fetchPaymentSession } from '../lib/api';
+import type { Station, PaymentSession } from '@stray/ui';
 
 // ── Presets ───────────────────────────────────────────────────────────────────
 
 const PRESETS = [
-  { grams: 50,  price: 8  },
-  { grams: 100, price: 15 },
-  { grams: 150, price: 22 },
-  { grams: 200, price: 30 },
+  { grams: 50,  price: 30 },
+  { grams: 100, price: 50 },
+  { grams: 150, price: 75 },
+  { grams: 200, price: 90 },
 ];
+
+// ── QR code (real, using qrcode package) ──────────────────────────────────────
+
+function RealQRCode({ value, size = 190 }: { value: string; size?: number }) {
+  const [src, setSrc] = useState('');
+
+  useEffect(() => {
+    if (!value) return;
+    import('qrcode').then((QRCode) => {
+      QRCode.toDataURL(value, { width: size, margin: 2, color: { dark: '#0f172a', light: '#ffffff' } })
+        .then(setSrc)
+        .catch(() => setSrc(''));
+    });
+  }, [value, size]);
+
+  if (!src) {
+    return (
+      <div style={{ width: size, height: size, background: '#f8fafc', borderRadius: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 28, height: 28, border: '2.5px solid #e2e8f0',
+          borderTopColor: '#94a3b8', borderRadius: '50%',
+          animation: 'stray-spin 0.75s linear infinite' }} />
+      </div>
+    );
+  }
+
+  return <img src={src} width={size} height={size} alt="Payment QR" style={{ display: 'block', borderRadius: 8 }} />;
+}
 
 // ── Apple logo SVG ────────────────────────────────────────────────────────────
 // Inline SVG so it renders identically on every platform.
@@ -21,64 +49,6 @@ function AppleIcon({ size = 34, color = '#fff' }: { size?: number; color?: strin
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={color} style={{ display: 'block' }}>
       <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
-    </svg>
-  );
-}
-
-// ── QR code generator ─────────────────────────────────────────────────────────
-
-function QRCode({ value, size = 180 }: { value: string; size?: number }) {
-  const N = 21;
-  const cell = size / N;
-  const seed = value.split('').reduce((a, c, i) => a + c.charCodeAt(0) * (i + 1), 0);
-
-  function isDark(r: number, c: number): boolean {
-    if (r < 7 && c < 7) {
-      if (r === 0 || r === 6 || c === 0 || c === 6) return true;
-      if (r >= 2 && r <= 4 && c >= 2 && c <= 4)    return true;
-      return false;
-    }
-    if (r < 7 && c >= N - 7) {
-      const c2 = c - (N - 7);
-      if (r === 0 || r === 6 || c2 === 0 || c2 === 6) return true;
-      if (r >= 2 && r <= 4 && c2 >= 2 && c2 <= 4)    return true;
-      return false;
-    }
-    if (r >= N - 7 && c < 7) {
-      const r2 = r - (N - 7);
-      if (r2 === 0 || r2 === 6 || c === 0 || c === 6) return true;
-      if (r2 >= 2 && r2 <= 4 && c >= 2 && c <= 4)    return true;
-      return false;
-    }
-    if ((r === 7 || c === 7) && (r < 9 || c < 9))  return false;
-    if (r === 7 && c >= N - 8)                       return false;
-    if (r >= N - 8 && c === 7)                       return false;
-    if (r === 6) return c % 2 === 0;
-    if (c === 6) return r % 2 === 0;
-    const h = Math.abs((seed * (r * N + c + 1) * 1664525 + 1013904223) & 0x7fffffff);
-    return h % 5 !== 0;
-  }
-
-  const rects: React.ReactNode[] = [];
-  for (let r = 0; r < N; r++) {
-    for (let c = 0; c < N; c++) {
-      if (isDark(r, c)) {
-        rects.push(
-          <rect key={`${r}-${c}`}
-            x={c * cell + 0.6} y={r * cell + 0.6}
-            width={cell - 0.8} height={cell - 0.8}
-            rx={cell * 0.18}
-            fill="#0f172a"
-          />
-        );
-      }
-    }
-  }
-
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: 'block' }}>
-      <rect width={size} height={size} fill="white" />
-      {rects}
     </svg>
   );
 }
@@ -92,21 +62,27 @@ type Phase = 'select' | 'payment' | 'apple-pay' | 'confirmed' | 'dispensing' | '
 interface FeedSheetProps {
   station: Station | null;
   onClose: () => void;
+  onDonated?: () => void;
 }
 
-export function FeedSheet({ station, onClose }: FeedSheetProps) {
-  const [selected, setSelected] = useState(1);
-  const [name, setName]         = useState('');
-  const [phase, setPhase]       = useState<Phase>('select');
-  const [fillPct, setFillPct]   = useState(0);
+export function FeedSheet({ station, onClose, onDonated }: FeedSheetProps) {
+  const [selected, setSelected]   = useState(1);
+  const [name, setName]           = useState('');
+  const [phase, setPhase]         = useState<Phase>('select');
+  const [fillPct, setFillPct]     = useState(0);
+  const [session, setSession]     = useState<PaymentSession | null>(null);
+  const [timeLeft, setTimeLeft]   = useState(300);  // 5 min countdown
+  const timerRef                  = useRef<ReturnType<typeof setInterval> | null>(null);
   const isOpen = !!station;
 
-  const preset = PRESETS[selected];
+  const preset  = PRESETS[selected];
   const isDark  = phase === 'apple-pay' || phase === 'confirmed';
+  const presetPrice = preset.price;
+  const presetGrams = preset.grams;
 
   // Reset when sheet opens
   useEffect(() => {
-    if (isOpen) { setSelected(1); setName(''); setPhase('select'); setFillPct(0); }
+    if (isOpen) { setSelected(1); setName(''); setPhase('select'); setFillPct(0); setSession(null); }
   }, [isOpen]);
 
   // Escape to close
@@ -128,21 +104,67 @@ export function FeedSheet({ station, onClose }: FeedSheetProps) {
       return () => clearTimeout(t);
     }
     if (phase === 'dispensing') {
+      // Send dispense command NOW — servo starts in sync with animation
+      if (session && session.id !== 'dummy') {
+        confirmPayment(session.id);
+      }
       const t1 = setTimeout(() => setFillPct(100), 60);
-      const t2 = setTimeout(() => setPhase('done'), 2900);
+      const t2 = setTimeout(() => { setPhase('done'); onDonated?.(); }, 2900);
       return () => { clearTimeout(t1); clearTimeout(t2); };
     }
-  }, [phase]);
+  }, [phase, session]);
 
-  async function handleApplePay() {
+  // Poll for external payment confirmation (user paid via the /payment/[id] page)
+  useEffect(() => {
+    if (phase !== 'payment' || !session || session.id === 'dummy') return;
+    const id = session.id;
+    const interval = setInterval(async () => {
+      const updated = await fetchPaymentSession(id);
+      if (updated?.status === 'paid') {
+        clearInterval(interval);
+        setPhase('dispensing');
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [phase, session]);
+
+  // Start countdown when entering payment phase; auto-regenerate on expiry
+  useEffect(() => {
+    if (phase === 'payment') {
+      setTimeLeft(300);
+      timerRef.current = setInterval(() => {
+        setTimeLeft((t) => {
+          if (t <= 1) {
+            clearInterval(timerRef.current!);
+            timerRef.current = null;
+            // Regenerate a fresh payment session silently
+            if (station) {
+              createPaymentSession(station.id, presetPrice, presetGrams, name.trim() || undefined)
+                .then((s) => { if (s) { setSession(s); setTimeLeft(300); } });
+            }
+            return 300; // reset display immediately so it doesn't flicker to 0
+          }
+          return t - 1;
+        });
+      }, 1000);
+    } else {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [phase, station, presetPrice, presetGrams, name]);
+
+  async function handleProceedToPayment() {
+    if (!station) return;
+    // Create payment session — fires MQTT show_qr to ESP32
+    const s = await createPaymentSession(station.id, preset.price, preset.grams, name.trim() || undefined);
+    setSession(s);
+    setPhase('payment');
+  }
+
+  function handleApplePay() {
     if (!station) return;
     setPhase('apple-pay');
-    postDonation({
-      station_id: station.id,
-      amount_ntd: preset.price,
-      donor_name: name.trim() || undefined,
-      dispense: true,
-    });
+    // confirmPayment is deferred to 'dispensing' phase so servo starts in sync with animation
   }
 
   // ── Per-phase body ────────────────────────────────────────────────────────
@@ -191,7 +213,7 @@ export function FeedSheet({ station, onClose }: FeedSheetProps) {
           />
         </div>
 
-        <button onClick={() => setPhase('payment')} style={{
+        <button onClick={handleProceedToPayment} style={{
           width: '100%', padding: '15px 0', borderRadius: 14, border: 0,
           background: 'linear-gradient(90deg, #fb923c, #f97316)',
           color: '#fff', cursor: 'pointer',
@@ -227,8 +249,26 @@ export function FeedSheet({ station, onClose }: FeedSheetProps) {
             Scan to pay
           </div>
 
-          <div style={{ borderRadius: 12, overflow: 'hidden', boxShadow: '0 2px 12px rgba(15,23,42,0.08)' }}>
-            {station && <QRCode value={`stray:${station.id}:${preset.price}`} size={190} />}
+          <div style={{ borderRadius: 12, overflow: 'hidden', boxShadow: '0 2px 12px rgba(15,23,42,0.08)', position: 'relative' }}>
+            {station && (() => {
+              const qrValue = session ? `https://stray.heretichydra.xyz/payment/${session.short_id}` : `stray:${station.id}:${preset.price}`;
+              const payUrl  = session ? `https://stray.heretichydra.xyz/payment/${session.short_id}` : null;
+              return payUrl ? (
+                <a href={payUrl} target="_blank" rel="noopener noreferrer" title="Tap to open payment page"
+                  style={{ display: 'block', cursor: 'pointer', position: 'relative' }}>
+                  <RealQRCode value={qrValue} size={190} />
+                  <div style={{
+                    position: 'absolute', bottom: 6, left: 0, right: 0,
+                    textAlign: 'center',
+                    fontFamily: 'var(--font-sans)', fontSize: 10, fontWeight: 700,
+                    color: 'rgba(15,23,42,0.5)', letterSpacing: '0.05em',
+                    pointerEvents: 'none',
+                  }}>TAP TO OPEN</div>
+                </a>
+              ) : (
+                <RealQRCode value={qrValue} size={190} />
+              );
+            })()}
           </div>
 
           <div style={{ textAlign: 'center' }}>
@@ -240,8 +280,8 @@ export function FeedSheet({ station, onClose }: FeedSheetProps) {
             </div>
           </div>
 
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#cbd5e1', letterSpacing: '0.08em' }}>
-            CODE EXPIRES IN 5:00
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: timeLeft < 60 ? '#f97316' : '#cbd5e1', letterSpacing: '0.08em' }}>
+            CODE EXPIRES IN {String(Math.floor(timeLeft / 60)).padStart(2, '0')}:{String(timeLeft % 60).padStart(2, '0')}
           </div>
         </div>
 

@@ -1,5 +1,5 @@
 'use client';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { DetectionFeed } from './DetectionFeed';
 import { SupplyLevels } from './SupplyLevels';
@@ -8,52 +8,9 @@ import { MonthlyHeatmap } from './MonthlyHeatmap';
 import { DayDetailSheet } from './DayDetailSheet';
 import { FeedSheet } from './FeedSheet';
 import { ScheduleBottomSheet } from './ScheduleBottomSheet';
+import { fetchDailyDonations } from '../lib/api';
 import type { Station, WSMessage, WSDetection } from '@stray/ui';
 import { MapPin, Clock } from 'lucide-react';
-
-// ── Heatmap seed data ──────────────────────────────────────────────────────────
-// Uses a proper LCG so values cluster naturally into busy / quiet weeks with
-// day-of-week variation and occasional zero (no-visit) days.
-
-function lcg(n: number): number {
-  return Math.abs((n * 1664525 + 1013904223) & 0x7fffffff) / 0x7fffffff;
-}
-
-function buildHeatmapData(stationId: string): Record<string, number> {
-  // Stable integer seed from the station ID string
-  const base = stationId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-
-  const result: Record<string, number> = {};
-  const today = new Date();
-
-  for (let i = 0; i < 90; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const dow = d.getDay(); // 0 = Sun
-
-    // Week-level baseline: some weeks are busier than others (0–1)
-    const weekIdx = Math.floor(i / 7);
-    const weekBase = lcg(base * 31 + weekIdx * 1013904223);
-
-    // Day-of-week pattern — weekdays a bit more active than weekends
-    const dowMult = (dow === 0 || dow === 6) ? 0.60 : 1.0;
-
-    // Per-day noise adds scatter within the week (0–1)
-    const dayNoise = lcg(base + i * 22695477 + 1013904223);
-
-    // Raw score: week baseline drives density, day noise adds scatter
-    const raw = (weekBase * 6.5 + dayNoise * 3.5) * dowMult;
-
-    // Sparse zero days: probability is inversely proportional to week activity
-    const zeroChance = lcg(base * 7 + i * 1664525);
-    const sparsityP  = 0.22 - weekBase * 0.18; // busy weeks ~4 %, quiet weeks ~22 %
-    const val = zeroChance < sparsityP ? 0 : Math.min(9, Math.round(raw));
-
-    result[dateStr] = val;
-  }
-  return result;
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -63,8 +20,19 @@ export function StationDetailClient({ initialStation }: { initialStation: Statio
   const [selectedDate, setSelectedDate]     = useState<string | null>(null);
   const [showFeed, setShowFeed]             = useState(false);
   const [showSchedule, setShowSchedule]     = useState(false);
+  const [activityData, setActivityData]     = useState<Record<string, number>>({});
+  const [donationTick, setDonationTick]     = useState(0);
 
-  const heatmapData = buildHeatmapData(initialStation.id);
+  // Fetch real daily donation counts; re-runs after each donation
+  useEffect(() => {
+    fetchDailyDonations(initialStation.id, 90).then((rows) => {
+      const map: Record<string, number> = {};
+      for (const { date, count } of rows) map[date] = count;
+      setActivityData(map);
+    });
+  }, [initialStation.id, donationTick]);
+
+  const handleDonated = useCallback(() => setDonationTick((n) => n + 1), []);
 
   const onMessage = useCallback((msg: WSMessage) => {
     if (msg.station_id !== initialStation.station_code) return;
@@ -86,6 +54,7 @@ export function StationDetailClient({ initialStation }: { initialStation: Statio
   }, [initialStation.station_code]);
 
   useWebSocket(onMessage);
+
 
   return (
     <div style={{ background: '#f8fafc', minHeight: '100vh', paddingBottom: 48 }}>
@@ -125,15 +94,15 @@ export function StationDetailClient({ initialStation }: { initialStation: Statio
         {/* Supply levels + env tiles */}
         <SupplyLevels station={station} />
 
-        {/* Weekly bar chart — tappable */}
+        {/* Weekly bar chart — real donation counts */}
         <WeeklyBarChart
-          data={heatmapData}
+          data={activityData}
           onDayClick={setSelectedDate}
         />
 
-        {/* Monthly heatmap — tappable */}
+        {/* Monthly heatmap — real donation counts */}
         <MonthlyHeatmap
-          data={heatmapData}
+          data={activityData}
           onDayClick={setSelectedDate}
         />
       </div>
@@ -142,13 +111,14 @@ export function StationDetailClient({ initialStation }: { initialStation: Statio
       <DayDetailSheet
         dateStr={selectedDate}
         stationName={station.name}
-        count={selectedDate ? (heatmapData[selectedDate] ?? 0) : 0}
+        count={selectedDate ? (activityData[selectedDate] ?? 0) : 0}
         onClose={() => setSelectedDate(null)}
       />
 
       <FeedSheet
         station={showFeed ? station : null}
         onClose={() => setShowFeed(false)}
+        onDonated={handleDonated}
       />
 
       <ScheduleBottomSheet

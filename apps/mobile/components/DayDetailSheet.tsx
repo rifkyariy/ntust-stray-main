@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef } from 'react';
 import { X, PawPrint, Banknote, Utensils, Zap } from '@stray/ui';
+import type { Donation } from '@stray/ui';
 
 // ── Deterministic mock data ───────────────────────────────────────────────────
 // Uses the date string as a seed so each day shows consistent (but varied) data.
@@ -124,8 +125,9 @@ function generateDayData(dateStr: string, heatCount: number): DayData {
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr + 'T12:00:00');
-  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  // Parse as local noon so the date never shifts across timezone boundaries
+  const d = new Date(dateStr + 'T12:00:00+08:00');
+  return d.toLocaleDateString('en-US', { timeZone: 'Asia/Taipei', weekday: 'long', month: 'long', day: 'numeric' });
 }
 
 function triggerLabel(t: FeedEvent['trigger']) {
@@ -199,20 +201,20 @@ function TimelineRow({ time, children }: { time: string; children: React.ReactNo
 interface DayDetailSheetProps {
   dateStr: string | null;   // null = closed
   stationName?: string;
-  /** Heatmap activity count for this day (0-9). Drives cat and donation count. */
+  /** Heatmap activity count (0-9) — drives seed-based cat count. */
   count?: number;
+  /** When provided (today only), overrides seed donation/food data with real records. */
+  realDonations?: Donation[];
   onClose: () => void;
 }
 
-export function DayDetailSheet({ dateStr, stationName, count = 0, onClose }: DayDetailSheetProps) {
+export function DayDetailSheet({ dateStr, stationName, count = 0, realDonations, onClose }: DayDetailSheetProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Reset scroll when a new date is selected
   useEffect(() => {
     if (dateStr && scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [dateStr]);
 
-  // Close on Escape key
   useEffect(() => {
     if (!dateStr) return;
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
@@ -221,9 +223,33 @@ export function DayDetailSheet({ dateStr, stationName, count = 0, onClose }: Day
   }, [dateStr, onClose]);
 
   const isOpen = !!dateStr;
-  const data = dateStr ? generateDayData(dateStr, count) : null;
-  const totalFoodG = data?.feeds.reduce((s, f) => s + f.grams, 0) ?? 0;
-  const totalDonatedNtd = data?.donations.reduce((s, d) => s + d.amountNtd, 0) ?? 0;
+  const seedData = dateStr ? generateDayData(dateStr, count) : null;
+
+  // Use real donations when provided, otherwise fall back to seed data
+  function toTWTime(createdAt: string): string {
+    const ts = new Date(createdAt.endsWith('Z') || createdAt.includes('+') ? createdAt : createdAt + 'Z');
+    return ts.toLocaleTimeString('en-US', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  const effectiveDonations: DonationEvent[] = realDonations
+    ? realDonations.map((d) => ({
+        donor: d.donor_name ?? 'Anonymous',
+        amountNtd: d.amount_ntd,
+        time: d.created_at ? toTWTime(d.created_at) : '--:--',
+        grams: d.grams ?? 100,
+      }))
+    : (seedData?.donations ?? []);
+
+  const effectiveFeeds: FeedEvent[] = realDonations
+    ? realDonations.filter((d) => d.dispensed).map((d) => ({
+        grams: d.grams ?? 100,
+        trigger: 'donation' as const,
+        time: d.created_at ? toTWTime(d.created_at) : '--:--',
+      }))
+    : (seedData?.feeds ?? []);
+
+  const totalFoodG = effectiveFeeds.reduce((s, f) => s + f.grams, 0);
+  const totalDonatedNtd = effectiveDonations.reduce((s, d) => s + d.amountNtd, 0);
 
   return (
     <>
@@ -300,7 +326,7 @@ export function DayDetailSheet({ dateStr, stationName, count = 0, onClose }: Day
         </div>
 
         {/* Summary strip */}
-        {data && (
+        {seedData && (
           <div style={{
             display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
             gap: 1, background: '#f1f5f9',
@@ -308,7 +334,7 @@ export function DayDetailSheet({ dateStr, stationName, count = 0, onClose }: Day
             flexShrink: 0,
           }}>
             {[
-              { label: 'Cats', value: String(data.cats.length), color: '#f97316' },
+              { label: 'Cats', value: String(seedData.cats.length), color: '#f97316' },
               { label: 'Donated', value: `NT$${totalDonatedNtd}`, color: '#8b5cf6' },
               { label: 'Food', value: `${totalFoodG}g`, color: '#3b82f6' },
             ].map(({ label, value, color }) => (
@@ -326,20 +352,20 @@ export function DayDetailSheet({ dateStr, stationName, count = 0, onClose }: Day
 
         {/* Scrollable content */}
         <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '20px 20px 32px' }}>
-          {data && (
+          {seedData && (
             <>
-              {/* Cat activity */}
+              {/* Cat activity — always seed-based */}
               <Section
                 title="Cat Activity"
                 icon={<PawPrint size={13} color="#f97316" strokeWidth={2} />}
-                count={data.cats.length}
+                count={seedData.cats.length}
               >
-                {data.cats.length === 0 ? (
+                {seedData.cats.length === 0 ? (
                   <div style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', padding: '12px 0' }}>
                     No cats detected this day
                   </div>
                 ) : (
-                  data.cats.map((cat) => (
+                  seedData.cats.map((cat) => (
                     <TimelineRow key={cat.catCode} time={cat.firstSeen}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <div>
@@ -381,18 +407,18 @@ export function DayDetailSheet({ dateStr, stationName, count = 0, onClose }: Day
                 )}
               </Section>
 
-              {/* Donations */}
+              {/* Donations — real data for today, seed data for past */}
               <Section
                 title="Donations"
                 icon={<Banknote size={13} color="#8b5cf6" strokeWidth={2} />}
-                count={data.donations.length}
+                count={effectiveDonations.length}
               >
-                {data.donations.length === 0 ? (
+                {effectiveDonations.length === 0 ? (
                   <div style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', padding: '12px 0' }}>
                     No donations this day
                   </div>
                 ) : (
-                  data.donations.map((d, i) => (
+                  effectiveDonations.map((d, i) => (
                     <TimelineRow key={i} time={d.time}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <div>
@@ -401,9 +427,7 @@ export function DayDetailSheet({ dateStr, stationName, count = 0, onClose }: Day
                           </div>
                           <div style={{ fontSize: 11, color: '#94a3b8' }}>triggered {d.grams}g dispense</div>
                         </div>
-                        <span style={{
-                          fontFamily: 'var(--font-sans)', fontWeight: 800, fontSize: 14, color: '#8b5cf6',
-                        }}>
+                        <span style={{ fontFamily: 'var(--font-sans)', fontWeight: 800, fontSize: 14, color: '#8b5cf6' }}>
                           NT${d.amountNtd}
                         </span>
                       </div>
@@ -412,13 +436,13 @@ export function DayDetailSheet({ dateStr, stationName, count = 0, onClose }: Day
                 )}
               </Section>
 
-              {/* Food dispensed */}
+              {/* Food dispensed — real data for today, seed data for past */}
               <Section
                 title="Food Dispensed"
                 icon={<Utensils size={13} color="#3b82f6" strokeWidth={2} />}
-                count={data.feeds.length}
+                count={effectiveFeeds.length}
               >
-                {data.feeds.map((f, i) => (
+                {effectiveFeeds.map((f, i) => (
                   <TimelineRow key={i} time={f.time}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div>

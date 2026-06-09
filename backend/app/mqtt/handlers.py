@@ -1,11 +1,16 @@
 import json
+import secrets
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.db.models import Station, StationStatus, Cat
+from app.db.models import Station, StationStatus, Cat, PaymentSession, PaymentStatus
 from app.db.session import AsyncSessionLocal
 from app.influx.writer import write_telemetry, write_feed_event
 from app.ws.manager import manager
+
+# Keyed by station_code; updated on every telemetry message.
+# Read by the stale-station watchdog in scheduler.py to detect dead stations.
+last_telemetry: dict[str, datetime] = {}
 
 
 async def _get_station(station_id: str, db: AsyncSession) -> Station | None:
@@ -16,7 +21,6 @@ async def _get_station(station_id: str, db: AsyncSession) -> Station | None:
 async def handle_telemetry(station_id: str, payload: bytes, db: AsyncSession) -> None:
     data = json.loads(payload)
     food_pct: int = int(data.get("food_pct", 0))
-    battery_pct: int = int(data.get("battery_pct", 0))
     temp_c: float = float(data.get("temp_c", 0.0))
     humidity_pct: float = float(data.get("humidity_pct", 0.0))
 
@@ -24,20 +28,24 @@ async def handle_telemetry(station_id: str, payload: bytes, db: AsyncSession) ->
     if station is None:
         return
 
+    # Only overwrite battery_pct if the ESP32 actually sent it; otherwise keep stored value.
+    battery_pct: int = int(data["battery_pct"]) if "battery_pct" in data else (station.battery_pct or 0)
+
     station.food_pct = food_pct
     station.battery_pct = battery_pct
     station.temp_c = temp_c
     station.humidity_pct = humidity_pct
     station.status = (
-        StationStatus.offline if battery_pct == 0 else
         StationStatus.low_food if food_pct < 25 else
         StationStatus.online
     )
+    city = station.city
+    last_telemetry[station_id] = datetime.now(timezone.utc)
     await db.commit()
 
     await write_telemetry(
         station_id=station_id,
-        city=station.city,
+        city=city,
         food_pct=food_pct,
         battery_pct=battery_pct,
         temp_c=temp_c,
@@ -110,3 +118,32 @@ async def handle_dispense_ack(station_id: str, payload: bytes, db: AsyncSession)
         "donor": data.get("donor"),
         "ts": datetime.now(timezone.utc).isoformat(),
     })
+
+
+MOBILE_BASE = "https://stray.heretichydra.xyz"
+_QR_DEFAULT_AMOUNT = 40
+_QR_DEFAULT_GRAMS  = 50
+
+
+async def handle_request_qr(station_id: str, db: AsyncSession) -> None:
+    """Button press on the feeder → create a fresh payment session and push QR to OLED."""
+    from app.mqtt.publisher import publish_show_qr  # local import avoids circular dep
+
+    station = await _get_station(station_id, db)
+    if station is None:
+        return
+
+    session = PaymentSession(
+        short_id=secrets.token_hex(3),
+        station_id=station.id,
+        donor_name=None,
+        amount_ntd=_QR_DEFAULT_AMOUNT,
+        grams=_QR_DEFAULT_GRAMS,
+        status=PaymentStatus.pending,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    qr_url = f"{MOBILE_BASE}/payment/{session.short_id}"
+    await publish_show_qr(station.station_code, qr_url, float(_QR_DEFAULT_AMOUNT), _QR_DEFAULT_GRAMS)
