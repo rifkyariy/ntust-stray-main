@@ -56,8 +56,13 @@ services:
     build:
       context: ./services/detector
       dockerfile: Dockerfile
+    environment:
+      DEMO_VIDEO_PATH: /data/video/dummy.mp4
+      DEMO_CACHE_DIR: /data/cache
     volumes:
       - ./services/detector/app:/app/app
+      - ./apps/admin/public/video:/data/video:ro
+      - ./services/detector/cache:/data/cache
     command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
     ports:
       - "8001:8001"

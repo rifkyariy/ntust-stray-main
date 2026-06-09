@@ -5,6 +5,7 @@ networks:
 volumes:
   postgres_data:
   influxdb_data:
+  detector_cache:
 
 services:
   mosquitto:
@@ -129,6 +130,11 @@ services:
     restart: unless-stopped
     environment:
       YOLO_MODEL: yolo26/yolo26l.pt
+      DEMO_VIDEO_PATH: /data/video/dummy.mp4
+      DEMO_CACHE_DIR: /data/cache
+    volumes:
+      - ./apps/admin/public/video:/data/video:ro
+      - detector_cache:/data/cache
     ports:
       - "3008:8001"
     healthcheck:
