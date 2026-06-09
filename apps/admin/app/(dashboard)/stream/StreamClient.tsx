@@ -992,7 +992,11 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
                   <button key={src} onClick={() => {
                     setSource(src);
                     setImgError(false);
-                    if (src === 'espcam') fetch(`${detectorUrl}/tracker/reset`, { method: 'POST' }).catch(() => {});
+                    if (src === 'espcam') {
+                      setScanDone(false);
+                      lastCapturedTimeRef.current = -1;
+                      fetch(`${detectorUrl}/tracker/reset`, { method: 'POST' }).catch(() => {});
+                    }
                   }} style={{
                     padding: '3px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
                     fontSize: 11, fontWeight: 600, fontFamily: 'monospace',

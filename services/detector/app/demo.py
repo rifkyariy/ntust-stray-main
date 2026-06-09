@@ -44,6 +44,16 @@ _VIDEO_PATH = os.getenv("DEMO_VIDEO_PATH", "../../apps/admin/public/video/dummy.
 _CACHE_DIR = os.getenv("DEMO_CACHE_DIR", "./cache")
 _CACHE_FILE = "dummy.detections.json"
 
+
+def _video_id() -> str:
+    """Fingerprint the demo video so a replaced file invalidates the cache."""
+    try:
+        s = os.stat(_VIDEO_PATH)
+        return f"dummy.mp4:{int(s.st_mtime)}:{s.st_size}"
+    except OSError:
+        return "dummy.mp4"
+
+
 _lock = threading.Lock()
 _state: dict = {"status": "idle", "progress": 0.0, "message": ""}
 
@@ -71,19 +81,22 @@ def _write_cache(data: dict) -> None:
 
 
 def get_state() -> dict:
-    """Return current state; include cached data when ready (and matching signature)."""
+    """Return current state; serve cached data only if it matches the current signature."""
     with _lock:
         st = dict(_state)
     cached = _read_cache()
     if cached and st["status"] in ("idle", "ready"):
-        return {"status": "ready", "progress": 1.0, "data": cached}
+        sig = cache_signature(_video_id(), detector.get_config()["model"], _default_settings())
+        if is_cache_valid(cached, sig):
+            return {"status": "ready", "progress": 1.0, "data": cached}
+        return {"status": "idle", "progress": 0.0, "message": ""}
     return st
 
 
 def _default_settings() -> dict:
     cfg = detector.get_config()
     return {
-        "conf": 0.15, "iou": 0.45, "imgsz": cfg["imgsz"],
+        "conf": 0.15, "iou": 0.45, "imgsz": 1280,
         "slice": True, "smooth": True, "stride": cfg.get("stride", 0.3),
     }
 
@@ -123,7 +136,7 @@ def _run(settings: dict) -> None:
 
         data = {
             "video": "dummy.mp4",
-            "hash": cache_signature("dummy.mp4", model_name, settings),
+            "hash": cache_signature(_video_id(), model_name, settings),
             "duration": round(duration, 3),
             "fps": round(fps, 3),
             "model": model_name,
@@ -143,7 +156,7 @@ def start_processing(settings: dict | None = None, force: bool = False) -> dict:
     """Kick off (or reuse) a precompute. Returns the immediate state."""
     settings = settings or _default_settings()
     cfg = detector.get_config()
-    sig = cache_signature("dummy.mp4", cfg["model"], settings)
+    sig = cache_signature(_video_id(), cfg["model"], settings)
 
     with _lock:
         if _state["status"] == "processing":
