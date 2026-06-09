@@ -61,3 +61,90 @@ def normalize_detections(
             "mask": mask_poly,
         })
     return out
+
+
+import time
+from PIL import Image
+from ultralytics import YOLO
+
+# Tracking/smoothing singletons (state across frames). The single-worker executor in
+# main.py serializes access; reset on model switch / new scan / before each precompute.
+_tracker: sv.ByteTrack | None = None
+_smoother: sv.DetectionsSmoother | None = None
+
+
+def reset_tracking() -> None:
+    global _tracker, _smoother
+    _tracker = sv.ByteTrack()
+    _smoother = sv.DetectionsSmoother(length=2)
+
+
+def _ensure_tracking() -> None:
+    if _tracker is None or _smoother is None:
+        reset_tracking()
+
+
+def _preprocess(image: Image.Image) -> tuple[Image.Image, float]:
+    """Crop the dark OS dock strip off screen recordings. Returns (image, y_scale)."""
+    orig_w, orig_h = image.size
+    strip_h = int(orig_h * 0.12)
+    bottom = image.crop((0, orig_h - strip_h, orig_w, orig_h))
+    px = list(bottom.convert("L").getdata())
+    if px and sum(px) / len(px) < 80:
+        image = image.crop((0, 0, orig_w, orig_h - strip_h))
+    return image, image.size[1] / orig_h
+
+
+def _build_slicer(model: YOLO, conf: float, iou: float, imgsz: int, proc_w: int, proc_h: int):
+    """SAHI-style slicer: ~2x2 tiles with overlap, merged by NMS. Version-tolerant."""
+    def callback(slice_img: np.ndarray) -> sv.Detections:
+        res = model.predict(
+            slice_img, conf=conf, iou=iou, imgsz=imgsz,
+            classes=_ANIMAL_CLASS_IDS, verbose=False,
+        )[0]
+        return sv.Detections.from_ultralytics(res)
+
+    slice_wh = (max(320, proc_w // 2 + 64), max(320, proc_h // 2 + 64))
+    try:  # supervision >= 0.20 modern signature
+        return sv.InferenceSlicer(
+            callback=callback, slice_wh=slice_wh,
+            overlap_ratio_wh=(0.2, 0.2),
+            overlap_filter=sv.OverlapFilter.NON_MAX_SUPPRESSION,
+            thread_workers=1,
+        )
+    except TypeError:  # older signature fallback
+        return sv.InferenceSlicer(callback=callback, slice_wh=slice_wh)
+
+
+def detect_frame(
+    model: YOLO, image: Image.Image, *,
+    conf: float, iou: float, imgsz: int,
+    slice: bool, smooth: bool,
+) -> tuple[list[dict], float, bool]:
+    """Run the unified pipeline on one PIL image. Returns (detections, ms, is_seg)."""
+    _ensure_tracking()
+    image, y_scale = _preprocess(image)
+    proc_w, proc_h = image.size
+    is_seg = any("-seg" in str(getattr(model, "ckpt_path", "")) for _ in [0]) \
+        or getattr(model, "task", "") == "segment"
+
+    t0 = time.perf_counter()
+    if slice:
+        frame = np.asarray(image)  # RGB HxWx3
+        dets = _build_slicer(model, conf, iou, imgsz, proc_w, proc_h)(frame)
+    else:
+        res = model.predict(
+            image, conf=conf, iou=iou, imgsz=imgsz,
+            classes=_ANIMAL_CLASS_IDS, verbose=False,
+        )[0]
+        dets = sv.Detections.from_ultralytics(res)
+
+    if len(dets):
+        dets = dets.with_nms(threshold=iou, class_agnostic=True)
+    dets = _tracker.update_with_detections(dets)
+    if smooth:
+        dets = _smoother.update_with_detections(dets)
+
+    inference_ms = (time.perf_counter() - t0) * 1000
+    names = model.names if isinstance(model.names, dict) else dict(enumerate(model.names))
+    return normalize_detections(dets, proc_w, proc_h, y_scale, names), round(inference_ms, 1), is_seg
