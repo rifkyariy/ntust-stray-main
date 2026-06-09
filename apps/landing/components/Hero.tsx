@@ -2,6 +2,8 @@ import { PawPrint, Calendar, Check } from '@stray/ui';
 import { Eyebrow } from '@stray/ui';
 import { StatusDot } from '@stray/ui';
 
+const MOBILE_URL = 'https://stray.heretichydra.xyz';
+
 export function Hero() {
   return (
     <section
@@ -60,7 +62,7 @@ export function Hero() {
             }}
           >
             <StatusDot color="#22c55e" size={8} />
-            12,408 meals funded this week
+            89 meals funded today
           </div>
 
           {/* Headline */}
@@ -101,7 +103,8 @@ export function Hero() {
 
           {/* CTA buttons */}
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 40 }}>
-            <button
+            <a
+              href={MOBILE_URL}
               style={{
                 background: 'linear-gradient(90deg, #fb923c, #f97316)',
                 color: '#fff',
@@ -116,13 +119,15 @@ export function Hero() {
                 alignItems: 'center',
                 gap: 8,
                 fontFamily: 'var(--font-sans)',
+                textDecoration: 'none',
                 transition: 'transform 0.15s, box-shadow 0.15s',
               }}
             >
               <PawPrint size={18} color="#fff" strokeWidth={2} />
               Feed a cat now
-            </button>
-            <button
+            </a>
+            <a
+              href={`${MOBILE_URL}`}
               style={{
                 background: '#fff',
                 color: '#1e293b',
@@ -136,11 +141,12 @@ export function Hero() {
                 alignItems: 'center',
                 gap: 8,
                 fontFamily: 'var(--font-sans)',
+                textDecoration: 'none',
               }}
             >
               <Calendar size={16} color="#1e293b" strokeWidth={2} />
               Schedule a meal
-            </button>
+            </a>
           </div>
 
           {/* Stats strip */}
@@ -153,9 +159,9 @@ export function Hero() {
             }}
           >
             {[
-              { v: '184k+', l: 'Meals funded' },
-              { v: '23', l: 'Cities live' },
-              { v: '8,200', l: 'Stray cats fed' },
+              { v: '650+', l: 'Meals funded' },
+              { v: '1', l: 'City live' },
+              { v: '24', l: 'Stray cats fed' },
             ].map((s) => (
               <div key={s.l}>
                 <div

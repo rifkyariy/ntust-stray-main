@@ -1,17 +1,29 @@
-import { PawPrint } from '@stray/ui';
+const MOBILE_URL = 'https://stray.heretichydra.xyz';
+const ADMIN_URL  = 'https://minstray.heretichydra.xyz';
 
-const NAV_COLS = [
+const NAV_COLS: Array<{ heading: string; links: Array<{ label: string; href: string }> }> = [
   {
     heading: 'Platform',
-    links: ['How it works', 'Stations map', 'For cities', 'Impact'],
+    links: [
+      { label: 'How it works',  href: '#how-it-works' },
+      { label: 'Stations map',  href: MOBILE_URL },
+      { label: 'Schedule meal', href: MOBILE_URL },
+      { label: 'Feed a cat',    href: MOBILE_URL },
+    ],
   },
   {
-    heading: 'Company',
-    links: ['About', 'Blog', 'Careers', 'Press'],
+    heading: 'Admin',
+    links: [
+      { label: 'Sign in',       href: ADMIN_URL },
+      { label: 'Dashboard',     href: ADMIN_URL },
+    ],
   },
   {
     heading: 'Legal',
-    links: ['Privacy policy', 'Terms of service', 'Cookie policy'],
+    links: [
+      { label: 'Privacy policy',    href: '#' },
+      { label: 'Terms of service',  href: '#' },
+    ],
   },
 ];
 
@@ -30,38 +42,33 @@ export function Footer() {
         >
           {/* Brand column */}
           <div>
-            <div
+            <a
+              href={MOBILE_URL}
               style={{
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
                 gap: 10,
                 marginBottom: 18,
+                textDecoration: 'none',
               }}
             >
-              <div
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 9,
-                  background: '#f97316',
-                  display: 'grid',
-                  placeItems: 'center',
-                  flexShrink: 0,
-                }}
-              >
-                <PawPrint size={20} color="#fff" strokeWidth={2} />
-              </div>
+              <img
+                src="/assets/stray-logo.svg"
+                alt="Stray logo"
+                style={{ width: 36, height: 36, borderRadius: 9 }}
+              />
               <span
                 style={{
                   fontFamily: 'var(--font-sans)',
                   fontWeight: 900,
                   fontSize: 20,
                   letterSpacing: '-0.03em',
+                  color: '#fff',
                 }}
               >
                 stray<span style={{ color: '#f97316' }}>.</span>
               </span>
-            </div>
+            </a>
             <p
               style={{
                 fontFamily: 'var(--font-sans)',
@@ -123,10 +130,10 @@ export function Footer() {
               >
                 {col.heading}
               </div>
-              {col.links.map((link) => (
+              {col.links.map(({ label, href }) => (
                 <a
-                  key={link}
-                  href="#"
+                  key={label}
+                  href={href}
                   style={{
                     display: 'block',
                     textDecoration: 'none',
@@ -137,7 +144,7 @@ export function Footer() {
                     transition: 'color 0.15s',
                   }}
                 >
-                  {link}
+                  {label}
                 </a>
               ))}
             </div>

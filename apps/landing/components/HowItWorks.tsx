@@ -13,7 +13,7 @@ const STEPS: Step[] = [
     icon: QrCode,
     step: 'Step 1',
     title: 'Scan the station',
-    body: 'Find any Stray station in Taipei, Tainan, Kaohsiung, or Taichung. Scan the QR code with your phone — no app download needed, works in any browser.',
+    body: 'Find a Stray station in Taipei. Scan the QR code with your phone — no app download needed, works in any browser.',
   },
   {
     icon: PawPrint,

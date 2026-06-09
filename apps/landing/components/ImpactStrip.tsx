@@ -9,7 +9,7 @@ interface Stats {
   raised: string;
 }
 
-const INITIAL: Stats = { online: 0, cities: 4, meals: 184000, raised: 'NT$2.75M' };
+const INITIAL: Stats = { online: 0, cities: 1, meals: 650, raised: 'NT$9,750' };
 
 export function ImpactStrip() {
   const [stats, setStats] = useState<Stats>(INITIAL);
@@ -39,8 +39,8 @@ export function ImpactStrip() {
   const items = [
     { v: String(stats.online), l: 'Stations online now' },
     { v: stats.raised, l: 'Total raised' },
-    { v: String(stats.cities), l: 'Cities live' },
-    { v: '184k+', l: 'Meals funded' },
+    { v: String(stats.cities), l: 'City live' },
+    { v: String(stats.meals) + '+', l: 'Meals funded' },
   ];
 
   return (

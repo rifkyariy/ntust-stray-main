@@ -1,6 +1,9 @@
 'use client';
 import { PawPrint } from '@stray/ui';
 
+const MOBILE_URL = 'https://stray.heretichydra.xyz';
+const ADMIN_URL  = 'https://minstray.heretichydra.xyz';
+
 export function MHeader() {
   return (
     <header
@@ -26,21 +29,14 @@ export function MHeader() {
       >
         {/* Logo */}
         <a
-          href="#"
+          href={MOBILE_URL}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}
         >
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 10,
-              background: 'linear-gradient(135deg, #fb923c, #f97316)',
-              display: 'grid',
-              placeItems: 'center',
-            }}
-          >
-            <PawPrint size={22} color="#fff" strokeWidth={2} />
-          </div>
+          <img
+            src="/assets/stray-logo.svg"
+            alt="Stray logo"
+            style={{ width: 40, height: 40, borderRadius: 10 }}
+          />
           <span
             style={{
               fontFamily: 'var(--font-sans)',
@@ -58,9 +54,9 @@ export function MHeader() {
         <nav style={{ display: 'flex', gap: 32 }}>
           {[
             { label: 'How it works', href: '#how-it-works' },
-            { label: 'Stations', href: '#stations' },
-            { label: 'For cities', href: '#for-cities' },
-            { label: 'Impact', href: '#impact' },
+            { label: 'Stations',     href: '#stations' },
+            { label: 'For cities',   href: '#for-cities' },
+            { label: 'Impact',       href: '#impact' },
           ].map(({ label, href }) => (
             <a
               key={label}
@@ -82,7 +78,7 @@ export function MHeader() {
         {/* CTA */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <a
-            href="#"
+            href={ADMIN_URL}
             style={{
               textDecoration: 'none',
               color: '#475569',
@@ -93,7 +89,8 @@ export function MHeader() {
           >
             Sign in
           </a>
-          <button
+          <a
+            href={MOBILE_URL}
             style={{
               background: '#f97316',
               color: '#fff',
@@ -108,12 +105,13 @@ export function MHeader() {
               gap: 8,
               alignItems: 'center',
               fontFamily: 'var(--font-sans)',
+              textDecoration: 'none',
               transition: 'transform 0.15s, box-shadow 0.15s',
             }}
           >
             <PawPrint size={16} color="#fff" strokeWidth={2} />
             Feed a cat — NT$15
-          </button>
+          </a>
         </div>
       </div>
     </header>

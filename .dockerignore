@@ -18,3 +18,7 @@ backend/**/.pytest_cache
 services/detector/models
 services/detector/__pycache__
 services/detector/**/__pycache__
+
+
+# ignore docs superpowers
+docs/superpowers

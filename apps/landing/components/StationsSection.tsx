@@ -2,6 +2,8 @@ import { fetchStations } from '../lib/api';
 import { TintedPill, Eyebrow } from '@stray/ui';
 import type { Station, StationStatus } from '@stray/ui';
 
+const MOBILE_URL = 'https://stray.heretichydra.xyz';
+
 function pillVariant(status: StationStatus): 'green' | 'orange' | 'slate' {
   if (status === 'online') return 'green';
   if (status === 'low_food') return 'orange';
@@ -56,7 +58,8 @@ function FoodBar({ pct }: { pct: number }) {
 
 function StationCard({ station: s }: { station: Station }) {
   return (
-    <div
+    <a
+      href={MOBILE_URL}
       style={{
         background: '#fff',
         borderRadius: 20,
@@ -67,6 +70,8 @@ function StationCard({ station: s }: { station: Station }) {
         flexDirection: 'column',
         gap: 16,
         transition: 'box-shadow 0.2s',
+        textDecoration: 'none',
+        cursor: 'pointer',
       }}
     >
       {/* Header row */}
@@ -120,7 +125,7 @@ function StationCard({ station: s }: { station: Station }) {
 
       {/* Food bar */}
       <FoodBar pct={s.food_pct ?? 0} />
-    </div>
+    </a>
   );
 }
 
@@ -179,7 +184,7 @@ export async function StationsSection() {
             </h2>
           </div>
           <a
-            href="#"
+            href={MOBILE_URL}
             style={{
               textDecoration: 'none',
               color: '#f97316',
