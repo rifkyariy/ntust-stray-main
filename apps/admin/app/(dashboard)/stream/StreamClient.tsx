@@ -464,6 +464,9 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
   const [iou, setIou]                         = useState(0.45);
   const [imgsz, setImgsz]                     = useState(960);   // inference resolution
   const [augment, setAugment]                 = useState(false); // test-time augmentation
+  const [slice, setSlice]                     = useState(true);  // demo precompute default on
+  const [smooth, setSmooth]                   = useState(true);
+  const [reprocessNonce, setReprocessNonce]   = useState(0);
   const [currentModel, setCurrentModel]       = useState('yolo26/yolo26l.pt');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [switching, setSwitching]             = useState(false);
@@ -491,6 +494,8 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
         setAvailableModels(cfg.models ?? []);
         if (typeof cfg.imgsz === 'number') setImgsz(cfg.imgsz);
         if (typeof cfg.augment === 'boolean') setAugment(cfg.augment);
+        if (typeof cfg.slice  === 'boolean') setSlice(cfg.slice);
+        if (typeof cfg.smooth === 'boolean') setSmooth(cfg.smooth);
         setDetectorOnline(true);
       })
       .catch(() => setDetectorOnline(false));
@@ -599,7 +604,7 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
     };
     poll();
     return () => { cancelled = true; };
-  }, [source, detectorUrl, finalizeTimeline]);
+  }, [source, detectorUrl, finalizeTimeline, reprocessNonce]);
 
   /* ── Called on every video 'ended' event ── */
   const handleVideoEnd = useCallback(() => {
@@ -633,6 +638,16 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
     if (v) { v.currentTime = 0; v.play().catch(() => {}); setPaused(false); }
   }, []);
 
+  const reprocessDemo = useCallback(async () => {
+    setScanDone(false);
+    setDemoStatus('processing');
+    setDemoProgress(0);
+    setActiveBoxes([]);
+    const qs = `conf=${conf}&iou=${iou}&imgsz=${imgsz}&slice=${slice}&smooth=${smooth}&force=true`;
+    await fetch(`${detectorUrl}/demo/process?${qs}`, { method: 'POST' }).catch(() => {});
+    setReprocessNonce(n => n + 1);
+  }, [detectorUrl, conf, iou, imgsz, slice, smooth]);
+
   /* ── Capture & detect one frame ── */
   const captureAndDetect = useCallback(async () => {
     const video  = videoRef.current;
@@ -660,7 +675,7 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
       form.append('file', blob, 'frame.jpg');
       try {
         const res = await fetch(
-          `${detectorUrl}/detect?conf=${conf}&iou=${iou}&imgsz=${imgsz}&augment=${augment}`,
+          `${detectorUrl}/detect?conf=${conf}&iou=${iou}&imgsz=${imgsz}&slice=${slice}&smooth=${smooth}`,
           { method: 'POST', body: form });
         if (!res.ok) return;
         const data: {
@@ -707,7 +722,7 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
         inFlightRef.current = false;
       }
     }, 'image/jpeg', 0.92);
-  }, [detectorUrl, conf, iou, imgsz, augment]);
+  }, [detectorUrl, conf, iou, imgsz, slice, smooth]);
 
   /* detection loop — only while ESP-Cam source and scan not finished.
      The in-flight guard means each tick just asks "can I capture yet?", so a
@@ -974,7 +989,11 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
                 borderRadius: 8, padding: 3, border: `1px solid ${D.border}`,
               }}>
                 {(['demo', 'espcam'] as const).map(src => (
-                  <button key={src} onClick={() => { setSource(src); setImgError(false); }} style={{
+                  <button key={src} onClick={() => {
+                    setSource(src);
+                    setImgError(false);
+                    if (src === 'espcam') fetch(`${detectorUrl}/tracker/reset`, { method: 'POST' }).catch(() => {});
+                  }} style={{
                     padding: '3px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
                     fontSize: 11, fontWeight: 600, fontFamily: 'monospace',
                     background: source === src ? D.orange : 'transparent',
@@ -1166,6 +1185,28 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
                 value={augment}
                 onChange={setAugment}
               />
+              <Toggle
+                label="Slicing"
+                sub="SAHI tiling · finds small/distant cats"
+                value={slice}
+                onChange={setSlice}
+              />
+              <Toggle
+                label="Smoothing"
+                sub="temporal · steadier boxes"
+                value={smooth}
+                onChange={setSmooth}
+              />
+              {source === 'demo' && (
+                <button onClick={reprocessDemo} disabled={demoStatus === 'processing'} style={{
+                  marginTop: 4, padding: '7px 0', borderRadius: 8, cursor: 'pointer',
+                  border: `1px solid ${D.orange}`, background: D.orangeDim, color: D.orange,
+                  fontSize: 11, fontFamily: 'monospace', fontWeight: 700,
+                  opacity: demoStatus === 'processing' ? 0.5 : 1,
+                }}>
+                  {demoStatus === 'processing' ? `Processing ${Math.round(demoProgress*100)}%` : 'Re-process demo'}
+                </button>
+              )}
               {inferMs != null && (
                 <div style={{
                   fontSize: 9, color: D.muted, fontFamily: 'monospace',
@@ -1175,13 +1216,14 @@ export default function StreamClient({ detectorUrl, embedded = false }: { detect
                 </div>
               )}
             </div>
-            {!scanDone && (
-              <div style={{
-                marginTop: 10, fontSize: 9, color: D.orange, fontFamily: 'monospace',
-                display: 'flex', alignItems: 'center', gap: 5,
-              }}>
-                <ScanLine size={10} />
-                Changes apply on the next captured frame
+            {source === 'espcam' && !scanDone && (
+              <div style={{ marginTop: 10, fontSize: 9, color: D.orange, fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <ScanLine size={10} /> Changes apply on the next captured frame
+              </div>
+            )}
+            {source === 'demo' && (
+              <div style={{ marginTop: 10, fontSize: 9, color: D.muted, fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <ScanLine size={10} /> Re-process to apply changes to the demo
               </div>
             )}
           </Card>
