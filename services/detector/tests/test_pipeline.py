@@ -37,3 +37,21 @@ def test_normalize_detections_handles_missing_track_id():
     out = normalize_detections(dets, proc_w=100, proc_h=100, y_scale=1.0, names=NAMES)
     assert out[0]["track_id"] is None
     assert out[0]["animal"] == "cat"
+
+
+def test_mask_to_polygon_normalizes_largest_contour():
+    from app.pipeline import mask_to_polygon
+    # 100x100 mask with a filled 20..40 square (x and y)
+    mask = np.zeros((100, 100), dtype=bool)
+    mask[20:40, 20:40] = True
+    poly = mask_to_polygon(mask, proc_w=100, proc_h=100, y_scale=1.0)
+    assert poly is not None and len(poly) >= 3
+    xs = [p[0] for p in poly]
+    ys = [p[1] for p in poly]
+    assert min(xs) >= 0.18 and max(xs) <= 0.42   # ~0.20..0.40 normalized
+    assert min(ys) >= 0.18 and max(ys) <= 0.42
+
+
+def test_mask_to_polygon_empty_returns_none():
+    from app.pipeline import mask_to_polygon
+    assert mask_to_polygon(np.zeros((10, 10), dtype=bool), 10, 10, 1.0) is None
