@@ -89,10 +89,51 @@ export default function DashboardClient({ initialStations, initialKpis, token }:
         {/* KPI strip */}
         <KPIStrip data={kpis} />
 
-        {/* Map + Activity side by side — default stretch so ActivityFeed fills the row */}
+        {/* Map + right column (live feed + activity) */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20 }}>
           <StationsMap stations={stations} onSelect={setSelectedStation} />
-          <ActivityFeed latestMsg={latestMsg} />
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Live camera feed */}
+            <div style={{
+              background: '#0f172a',
+              borderRadius: 14,
+              overflow: 'hidden',
+              position: 'relative',
+              aspectRatio: '16/9',
+              flexShrink: 0,
+            }}>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <video
+                src="/video/dummy.mp4"
+                autoPlay
+                loop
+                muted
+                playsInline
+                style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.88 }}
+              />
+              <div style={{
+                position: 'absolute', top: 8, left: 8,
+                background: 'rgba(239,68,68,0.9)',
+                borderRadius: 5,
+                padding: '2px 7px',
+                fontSize: 10, fontWeight: 700, color: '#fff', letterSpacing: '0.05em',
+              }}>
+                ● LIVE
+              </div>
+              <div style={{
+                position: 'absolute', bottom: 0, left: 0, right: 0,
+                padding: '20px 10px 8px',
+                background: 'linear-gradient(0deg, rgba(15,23,42,0.85) 0%, transparent 100%)',
+              }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.08em' }}>
+                  CAMPUS FEED · NTUST
+                </div>
+              </div>
+            </div>
+
+            <ActivityFeed latestMsg={latestMsg} />
+          </div>
         </div>
 
         {/* Stations table */}

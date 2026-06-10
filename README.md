@@ -20,53 +20,7 @@
 
 ## System architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Public Internet (Cloudflare Tunnel)         │
-│                                                                     │
-│  heretichydra.xyz         → Landing   :3006                         │
-│  stray.heretichydra.xyz   → Mobile    :3005                         │
-│  minstray.heretichydra.xyz→ Admin     :3007                         │
-│  api.heretichydra.xyz     → Backend   :3004  (REST + WebSocket)     │
-│  mqtt-stray.heretichydra.xyz → MQTT WebSocket :9001                 │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ Docker bridge network (stray_network)
-    ┌──────────────────────────┼────────────────────────────┐
-    │                          │                            │
-  ┌─▼──────────┐        ┌──────▼──────┐           ┌────────▼───────┐
-  │  Landing   │        │   Mobile    │           │     Admin      │
-  │  Next.js   │        │  Next.js    │           │   Next.js      │
-  │  :3001     │        │  :3000      │           │   :3002        │
-  └────────────┘        └──────┬──────┘           └───────┬────────┘
-                               │  /api/backend/*           │  /api/backend/*
-                               │                           │  /detector/*
-                               └───────────┬───────────────┘
-                                           │
-                              ┌────────────▼────────────┐
-                              │        Backend           │
-                              │  FastAPI + aiomqtt       │
-                              │  Python 3.12  :8000      │
-                              └──┬──────┬───────┬────────┘
-                                 │      │       │
-                    ┌────────────▼┐  ┌──▼───┐  ┌▼──────────────┐
-                    │ PostgreSQL  │  │Influx│  │   Mosquitto    │
-                    │ :5432       │  │:8086 │  │   :1883 / 9001 │
-                    └─────────────┘  └──────┘  └───────┬────────┘
-                                                        │ MQTT
-                                               ┌────────▼───────┐
-                                               │  Detector      │
-                                               │  FastAPI/YOLO  │
-                                               │  :8001         │
-                                               └────────────────┘
-                                                        │ wss:// (Cloudflare)
-                                               ┌────────▼───────┐
-                                               │  ESP32 Feeder  │
-                                               │  + Servo       │
-                                               │  + HC-SR04     │
-                                               │  + DHT22       │
-                                               │  + SSD1306     │
-                                               └────────────────┘
-```
+![System Architecture](docs/img/system-architecture.png)
 
 ---
 

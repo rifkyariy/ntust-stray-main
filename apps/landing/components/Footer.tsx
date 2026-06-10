@@ -181,7 +181,7 @@ export function Footer() {
               flexShrink: 0,
             }}
           >
-            NT$15 · One meal · One cat.
+            From NT$30 · One meal · One cat.
           </div>
         </div>
       </div>

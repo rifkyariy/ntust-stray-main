@@ -34,7 +34,7 @@ export function DispenseSheet({ station }: { station: Station }) {
       setPhase('pay');
     } else {
       // Backend offline — create a dummy session so UI flow still works
-      setSession({ id: 'dummy', short_id: 'offline', station_id: station.id, amount_ntd: preset.price, grams: preset.grams, status: 'pending', created_at: new Date().toISOString(), paid_at: null });
+      setSession({ id: 'dummy', short_id: 'offline', station_id: station.id, amount_ntd: preset.price, grams: preset.grams, status: 'pending', created_at: new Date().toISOString(), paid_at: null, donor_name: null });
       setPhase('pay');
     }
   }
@@ -76,7 +76,7 @@ export function DispenseSheet({ station }: { station: Station }) {
   }
 
   // ── LINE Pay screen ──
-  if (phase === 'pay' && session) {
+  if ((phase === 'pay' || phase === 'error') && session) {
     return (
       <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
         {/* Header */}

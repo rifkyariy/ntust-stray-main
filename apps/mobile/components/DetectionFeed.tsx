@@ -30,29 +30,16 @@ export function DetectionFeed({ station, latestDetection, onFeedClick, onSchedul
       overflow: 'hidden',
       flexShrink: 0,
     }}>
-      {/* Camera placeholder image */}
-      {station.image_url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={station.image_url}
-          alt={`${station.name} live feed`}
-          style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }}
-        />
-      ) : (
-        /* Placeholder gradient when no image URL */
-        <div style={{
-          position: 'absolute', inset: 0,
-          background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <div style={{ textAlign: 'center', opacity: 0.3 }}>
-            <PawPrint size={48} color="#fff" strokeWidth={1.5} />
-            <div style={{ color: '#fff', fontFamily: 'var(--font-sans)', fontSize: 12, marginTop: 8 }}>
-              Camera connecting…
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Looping demo video as the live feed */}
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <video
+        src="/video/dummy.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.88 }}
+      />
 
       {/* AI detection bounding box */}
       {latestDetection && (

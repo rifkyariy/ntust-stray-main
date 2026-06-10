@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { fetchStations } from '../../../lib/api';
 import { SEED_STATIONS } from '../../../lib/seeds';
 import Topbar from '../../../components/Topbar';
-import { TintedPill } from '@stray/ui';
+import { TintedPill, WifiOff, Utensils, Battery, Check, ChevronRight } from '@stray/ui';
 
 export default async function AlertsPage() {
   const fetched = await fetchStations();
@@ -39,10 +39,10 @@ export default async function AlertsPage() {
         {/* Summary */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
           {[
-            { label: 'Offline Stations', count: stations.filter((s) => s.status === 'offline').length, color: '#ef4444', bg: '#fef2f2' },
-            { label: 'Low Food', count: lowFood.length, color: '#f97316', bg: '#fff7ed' },
-            { label: 'Low Battery', count: lowBattery.length, color: '#eab308', bg: '#fefce8' },
-          ].map(({ label, count, color, bg }) => (
+            { label: 'Offline Stations', count: stations.filter((s) => s.status === 'offline').length, color: '#ef4444', bg: '#fef2f2', Icon: WifiOff },
+            { label: 'Low Food',         count: lowFood.length,    color: '#f97316', bg: '#fff7ed', Icon: Utensils },
+            { label: 'Low Battery',      count: lowBattery.length, color: '#eab308', bg: '#fefce8', Icon: Battery  },
+          ].map(({ label, count, color, bg, Icon }) => (
             <div key={label} style={{
               background: '#fff',
               borderRadius: 16, padding: '18px 20px',
@@ -61,9 +61,8 @@ export default async function AlertsPage() {
                 width: 44, height: 44, borderRadius: 12,
                 background: bg,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 20,
               }}>
-                {label === 'Offline Stations' ? '📡' : label === 'Low Food' ? '🍽️' : '🔋'}
+                <Icon size={20} color={color} strokeWidth={2} />
               </div>
             </div>
           ))}
@@ -79,7 +78,9 @@ export default async function AlertsPage() {
 
           {alerts.length === 0 && lowFood.length === 0 && lowBattery.length === 0 ? (
             <div style={{ padding: '48px', textAlign: 'center' }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+                <Check size={26} color="#16a34a" strokeWidth={2.5} />
+              </div>
               <div style={{ fontSize: 16, fontWeight: 700, color: '#16a34a' }}>All systems nominal</div>
               <div style={{ fontSize: 13, color: 'var(--slate-400)', marginTop: 6 }}>No active alerts.</div>
             </div>
@@ -122,7 +123,7 @@ export default async function AlertsPage() {
                       <div style={{ fontWeight: 700, color: a.battery_pct < 20 ? '#ef4444' : 'var(--slate-700)' }}>{a.battery_pct}%</div>
                     </div>
                   </div>
-                  <span style={{ fontSize: 16, color: 'var(--slate-300)' }}>›</span>
+                  <ChevronRight size={16} color="var(--slate-300)" strokeWidth={2} />
                 </Link>
               ))}
             </div>

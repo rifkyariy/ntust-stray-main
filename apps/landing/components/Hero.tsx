@@ -127,7 +127,7 @@ export function Hero() {
               Feed a cat now
             </a>
             <a
-              href={`${MOBILE_URL}`}
+              href={MOBILE_URL}
               style={{
                 background: '#fff',
                 color: '#1e293b',

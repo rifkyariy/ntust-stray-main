@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import Link from 'next/link';
 import { Search, Bell, Plus } from '@stray/ui';
 
 const CITIES = ['All', 'Taipei', 'Tainan', 'Kaohsiung', 'Taichung', 'Hsinchu'];
@@ -94,8 +95,9 @@ export default function Topbar({ alertCount = 0, onAddStation, onCityFilter, onS
 
       <div style={{ flex: 1 }} />
 
-      {/* Bell */}
-      <button
+      {/* Bell → /alerts */}
+      <Link
+        href="/alerts"
         style={{
           position: 'relative',
           width: 38, height: 38,
@@ -104,6 +106,8 @@ export default function Topbar({ alertCount = 0, onAddStation, onCityFilter, onS
           background: '#fff',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer',
+          textDecoration: 'none',
+          flexShrink: 0,
         }}
       >
         <Bell size={17} color="var(--slate-600)" strokeWidth={2} />
@@ -123,7 +127,7 @@ export default function Topbar({ alertCount = 0, onAddStation, onCityFilter, onS
             {alertCount > 9 ? '9+' : alertCount}
           </span>
         )}
-      </button>
+      </Link>
 
       {/* Add station */}
       <button

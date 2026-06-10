@@ -160,16 +160,15 @@ export default function StationDrawer({ station, token, onClose }: StationDrawer
                 position: 'relative',
                 overflow: 'hidden',
               }}>
-                {liveStation.image_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={liveStation.image_url}
-                    alt={liveStation.name}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.7 }}
-                  />
-                ) : (
-                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>Camera feed unavailable</span>
-                )}
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <video
+                  src="/video/dummy.mp4"
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.88 }}
+                />
                 <div style={{
                   position: 'absolute', top: 10, left: 10,
                   background: 'rgba(239,68,68,0.9)',

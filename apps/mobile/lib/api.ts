@@ -86,6 +86,7 @@ async function dummyDonation(payload: {
     amount_ntd: payload.amount_ntd,
     donor_name: payload.donor_name ?? null,
     dispensed:  payload.dispense,
+    grams:      null,
     created_at: new Date().toISOString(),
   };
 }
@@ -140,7 +141,7 @@ export async function confirmPayment(sessionId: string): Promise<PaymentSession 
   } catch {
     // Simulate success so UI flow works without backend
     await new Promise((r) => setTimeout(r, 800));
-    return { id: 'dummy', short_id: 'dummy', station_id: '', amount_ntd: 0, grams: 0, status: 'paid', created_at: new Date().toISOString(), paid_at: new Date().toISOString() };
+    return { id: 'dummy', short_id: 'dummy', station_id: '', donor_name: null, amount_ntd: 0, grams: 0, status: 'paid', created_at: new Date().toISOString(), paid_at: new Date().toISOString() };
   }
 }
 

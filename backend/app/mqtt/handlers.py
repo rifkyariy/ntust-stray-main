@@ -121,7 +121,7 @@ async def handle_dispense_ack(station_id: str, payload: bytes, db: AsyncSession)
 
 
 MOBILE_BASE = "https://stray.heretichydra.xyz"
-_QR_DEFAULT_AMOUNT = 40
+_QR_DEFAULT_AMOUNT = 30
 _QR_DEFAULT_GRAMS  = 50
 
 

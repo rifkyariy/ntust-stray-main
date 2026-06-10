@@ -36,7 +36,16 @@ async def create_donation(
 
     # Trigger dispense if requested
     if body.dispense:
-        grams = max(50, min(200, int(body.amount_ntd / 15 * 100)))
+        # Map amount → grams using the fixed price tiers
+        amt = float(body.amount_ntd)
+        if amt >= 90:
+            grams = 200
+        elif amt >= 75:
+            grams = 150
+        elif amt >= 50:
+            grams = 100
+        else:
+            grams = 50
         background_tasks.add_task(publish_dispense_command, station.station_code, grams, "donation")
         background_tasks.add_task(
             write_donation_event, station.station_code,

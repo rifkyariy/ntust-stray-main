@@ -19,7 +19,7 @@ const STEPS: Step[] = [
     icon: PawPrint,
     step: 'Step 2',
     title: 'Dispense now or schedule',
-    body: 'Choose an immediate meal (50–200g) or schedule one for later in the day. NT$15 feeds one cat — or donate more to queue multiple meals.',
+    body: 'Choose an immediate meal (50–200g) or schedule one for later in the day. From NT$30 per meal — pick your portion size and dispense instantly.',
   },
   {
     icon: Calendar,

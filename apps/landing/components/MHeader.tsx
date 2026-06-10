@@ -110,7 +110,7 @@ export function MHeader() {
             }}
           >
             <PawPrint size={16} color="#fff" strokeWidth={2} />
-            Feed a cat — NT$15
+            Feed a cat — from NT$30
           </a>
         </div>
       </div>
